@@ -217,7 +217,7 @@ if [[ $DB_IS_DRIVER != "TRUE" ]]; then
     res=$?
     
     # increment the loop counter
-    if [ $i -gt 20 ] 
+    if [ $i -gt 40 ] 
     then 
       break
     fi
