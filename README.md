@@ -19,3 +19,7 @@ Each instance of the OSRM Backend Server will require access to map data.  This 
 <img src='https://brysmiwasb.blob.core.windows.net/demos/images/osrm_preprocessing_deployment2.png' width=500>
 
 As you plan your cluster deployment topology, it's important to keep in mind that the OSRM software loads the somewhat large map file assets into memory.  This speeds route resolution but requires each computer hosting an instance of the OSRM software to have available quite a bit of RAM.  If there is not sufficient memory, the OSRM software will often shutdown without a clear error message.  It is important that you pay careful attention to steps in the pre-processing steps that if successful will indicate the amount of RAM consumed by the map files and be sure to adjust the size of the worker nodes in your routing cluster deployment accordingly.  
+
+To run this accelerator, clone this repo into a Databricks workspace. Attach the RUNME notebook to any cluster running a DBR 11.0 or later runtime, and execute the notebook via Run-All. A multi-step-job describing the accelerator pipeline will be created, and the link will be provided. Execute the multi-step-job to see how the pipeline runs.
+
+The job configuration is written in the RUNME notebook in json format. The cost associated with running the accelerator is the user's responsibility.
