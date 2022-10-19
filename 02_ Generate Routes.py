@@ -118,7 +118,7 @@ nyc_taxi = (
   .withColumn('trip_seconds', fn.expr('datediff(second, pickup_datetime, dropoff_datetime)'))
   )
 
-display(nyc_taxi)
+display(nyc_taxi.limit(10))
 
 # COMMAND ----------
 
@@ -232,6 +232,7 @@ display(
       'trip_meters',
       'trip_seconds'
       )
+    .limit(10)
   )
 
 # COMMAND ----------
@@ -304,7 +305,7 @@ nyc_taxi_routes = (
 
 
 display(
-  nyc_taxi_routes
+  nyc_taxi_routes.limit(10)
   )
 
 # COMMAND ----------
@@ -329,6 +330,7 @@ display(
       'trip_seconds',
       'route_seconds'
       )
+    .limit(10)
   )
 
 # COMMAND ----------
@@ -346,7 +348,7 @@ nyc_taxi_geometry = (
     .drop('osrm_route')
   )
 
-display(nyc_taxi_geometry)
+display(nyc_taxi_geometry.limit(10))
 
 # COMMAND ----------
 
@@ -359,7 +361,7 @@ display(nyc_taxi_geometry)
 # DBTITLE 1,Visualize Routes
 # MAGIC %%mosaic_kepler
 # MAGIC 
-# MAGIC nyc_taxi_geometry geom  geometry 5000
+# MAGIC nyc_taxi_geometry geom  geometry 500
 
 # COMMAND ----------
 
@@ -432,7 +434,7 @@ driving_tables = (
   .withColumn('driving_table_durations', fn.col('driving_table.durations'))
   )  
 
-display(driving_tables)
+display(driving_tables.limit(10))
 
 # COMMAND ----------
 
