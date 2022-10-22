@@ -1,4 +1,9 @@
 # Databricks notebook source
+# MAGIC %md 
+# MAGIC You may find this series of notebooks at https://github.com/databricks-industry-solutions/routing.git. For more information about this solution accelerator, visit https://www.databricks.com/solutions/accelerators/scalable-route-generation.
+
+# COMMAND ----------
+
 # MAGIC %md The purpose of this notebook is to compile the OSRM software and pre-process the OpenStreetMap files required to generate map routes from within a Databricks cluster.
 
 # COMMAND ----------
