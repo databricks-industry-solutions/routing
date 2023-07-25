@@ -179,9 +179,9 @@
 
 # COMMAND ----------
 
-# MAGIC %md ## Step 4: Create Init Script
+# MAGIC %md ## Step 4: Review Init Script
 # MAGIC
-# MAGIC At this point, all the elements required to run the OSRM Backend Server are in place.  We now need to define a [cluster init script](https://docs.databricks.com/clusters/init-scripts.html#cluster-scoped-init-scripts) with which the server can be deployed to each worker node in a Databricks cluster. The init script is written into the local repo or workspace folder.
+# MAGIC At this point, all the elements required to run the OSRM Backend Server are in place.  We now need a [cluster init script](https://docs.databricks.com/clusters/init-scripts.html#cluster-scoped-init-scripts) with which the server can be deployed to each worker node in a Databricks cluster. This init script is available in the Repo and in DBC download as `./osrm-backend.sh`.
 # MAGIC
 # MAGIC The logic within this script is pretty straightforward.  We install the package dependencies (pretty much as we did above) and the launch the routing server.  
 # MAGIC
@@ -189,53 +189,14 @@
 
 # COMMAND ----------
 
-with open("osrm-backend.sh", "w") as f:
-  f.write('''#!/bin/bash
-
-if [[ $DB_IS_DRIVER != "TRUE" ]]; then  
-
-  echo "installing osrm backend server dependencies"
-  sudo apt -qq install -y build-essential git cmake pkg-config libbz2-dev libxml2-dev libzip-dev libboost-all-dev lua5.2 liblua5.2-dev libtbb-dev
-  
-  echo "launching osrm backend server"
-  /dbfs/FileStore/osrm-backend/build/osrm-routed --algorithm=MLD /dbfs/FileStore/osrm-backend/maps/north-america/north-america-latest.osrm &
-  
-  echo "wait until osrm backend server becomes responsive"
-  res=-1
-  i=1
-
-  # while no response
-  while [ $res -ne 0 ]
-  do
-
-    # test connectivity
-    curl --silent "http://127.0.0.1:5000/route/v1/driving/-74.005310,40.708750;-73.978691,40.744850"
-    res=$?
-    
-    # increment the loop counter
-    if [ $i -gt 40 ] 
-    then 
-      break
-    fi
-    i=$(( $i + 1 ))
-
-    # if no response, sleep
-    if [ $res -ne 0 ]
-    then
-      sleep 30
-    fi
-
-  done  
-  
-fi
-''')
+# MAGIC %sh cat osrm-backend.sh
 
 # COMMAND ----------
 
-# MAGIC %md With the init script defined, we can now configure a cluster on which we will run the OSRM Backend Server.  Please refer to guidance in notebook *00* about the sizing of the worker nodes in this cluster.
+# MAGIC %md We now configure a cluster on which we will run the OSRM Backend Server.  Please refer to guidance in notebook *00* about the sizing of the worker nodes in this cluster.
 # MAGIC
 # MAGIC Note: 
-# MAGIC * the init script setup steps are automated for you if you use the **RUNME** file available in this folder to create the job and clusters for this accelerator
+# MAGIC * If you use the **RUNME** file available in this folder to create the job and clusters for this accelerator, the init script setup steps are automated for you 
 # MAGIC * If you define the cluster's configuration manually, provide the path to the init script written by the previous cell.  As the cluster starts, each node in the cluster will execute this script to affect its configuration:
 # MAGIC </p>
 # MAGIC
