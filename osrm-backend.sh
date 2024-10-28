@@ -2,11 +2,15 @@
 
 if [[ $DB_IS_DRIVER != "TRUE" ]]; then  
 
+  #rm /var/lib/apt/lists/*_*
+  rm /var/lib/apt/lists/security*
+  apt-get update
+
   echo "installing osrm backend server dependencies"
   sudo apt -qq install -y build-essential git cmake pkg-config libbz2-dev libxml2-dev libzip-dev libboost-all-dev lua5.2 liblua5.2-dev libtbb-dev
   
   echo "launching osrm backend server"
-  /dbfs/FileStore/osrm-backend/build/osrm-routed --algorithm=MLD /dbfs/FileStore/osrm-backend/maps/north-america/north-america-latest.osrm &
+  /dbfs/FileStore/osrm-backend/build/osrm-routed --algorithm=MLD /dbfs/FileStore/osrm-backend/maps/north-america/us-northeast-latest.osrm &
   
   echo "wait until osrm backend server becomes responsive"
   res=-1

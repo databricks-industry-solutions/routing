@@ -81,7 +81,7 @@ job_json = {
             {
                 "job_cluster_key": "routing_cluster",
                 "new_cluster": {
-                    "spark_version": "10.4.x-cpu-ml-scala2.12",
+                    "spark_version": "13.3.x-cpu-ml-scala2.12",
                     "num_workers": 0,
                     "node_type_id": {"AWS": "i3.4xlarge", "MSA": "Standard_E16_v3", "GCP": "n1-highmem-16"}
                 }
@@ -89,7 +89,7 @@ job_json = {
             {
                 "job_cluster_key": "routing_cluster_w_init",
                 "new_cluster": {
-                    "spark_version": "10.4.x-cpu-ml-scala2.12",
+                    "spark_version": "13.3.x-cpu-ml-scala2.12",
                     "num_workers": 2,
                     "node_type_id": {"AWS": "i3.4xlarge", "MSA": "Standard_E16_v3", "GCP": "n1-highmem-16"},
                     "init_scripts": [

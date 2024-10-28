@@ -24,6 +24,12 @@
 
 # COMMAND ----------
 
+rm /var/lib/apt/lists/*_*
+apt-get update
+
+
+# COMMAND ----------
+
 # DBTITLE 1,Install Dependencies
 # MAGIC %sh -e
 # MAGIC
@@ -46,7 +52,10 @@
 # MAGIC
 # MAGIC # clone the osrm backend server repo
 # MAGIC rm -rf osrm-backend
-# MAGIC git clone --depth 1 -b v5.26.0 https://github.com/Project-OSRM/osrm-backend
+# MAGIC git clone https://github.com/Project-OSRM/osrm-backend
+# MAGIC cd osrm-backend
+# MAGIC git checkout v5.27.1
+# MAGIC
 
 # COMMAND ----------
 
@@ -58,15 +67,14 @@
 
 # DBTITLE 1,Build the OSRM Backend Server
 # MAGIC %sh -e
-# MAGIC
 # MAGIC cd /srv/git/osrm-backend
 # MAGIC
 # MAGIC mkdir -p build
 # MAGIC cd build
-# MAGIC
-# MAGIC cmake ..
+# MAGIC cmake .. -DCMAKE_BUILD_TYPE=Release
 # MAGIC cmake --build .
 # MAGIC sudo cmake --build . --target install
+# MAGIC
 
 # COMMAND ----------
 
@@ -95,7 +103,7 @@
 # MAGIC
 # MAGIC # download map file to appropriate folder
 # MAGIC cd /srv/git/osrm-backend/maps/north-america
-# MAGIC wget --quiet https://download.geofabrik.de/north-america-latest.osm.pbf
+# MAGIC wget --quiet https://download.geofabrik.de/north-america/us-northeast-latest.osm.pbf
 # MAGIC
 # MAGIC # list folder contents
 # MAGIC ls -l .
@@ -118,7 +126,7 @@
 # MAGIC cd /srv/git/osrm-backend/maps/north-america
 # MAGIC
 # MAGIC # extract map file contents
-# MAGIC /srv/git/osrm-backend/build/osrm-extract north-america-latest.osm.pbf -p /srv/git/osrm-backend/profiles/car.lua > /srv/git/osrm-backend/logs/extract_log.txt
+# MAGIC /srv/git/osrm-backend/build/osrm-extract us-northeast-latest.osm.pbf -p /srv/git/osrm-backend/profiles/car.lua > /srv/git/osrm-backend/logs/extract_log.txt
 # MAGIC
 # MAGIC # review output from extract command
 # MAGIC #echo '----------------------------------------'
@@ -148,7 +156,7 @@
 # MAGIC
 # MAGIC cd /srv/git/osrm-backend/maps/north-america
 # MAGIC
-# MAGIC /srv/git/osrm-backend/build/osrm-partition north-america-latest.osrm
+# MAGIC /srv/git/osrm-backend/build/osrm-partition us-northeast-latest.osrm
 
 # COMMAND ----------
 
@@ -161,7 +169,7 @@
 # MAGIC
 # MAGIC cd /srv/git/osrm-backend/maps/north-america
 # MAGIC
-# MAGIC /srv/git/osrm-backend/build/osrm-customize north-america-latest.osrm
+# MAGIC /srv/git/osrm-backend/build/osrm-customize us-northeast-latest.osrm
 
 # COMMAND ----------
 
