@@ -24,9 +24,10 @@
 
 # COMMAND ----------
 
-rm /var/lib/apt/lists/*_*
-apt-get update
-
+# MAGIC %sh -e
+# MAGIC rm /var/lib/apt/lists/*_*
+# MAGIC apt-get update
+# MAGIC
 
 # COMMAND ----------
 
