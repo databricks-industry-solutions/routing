@@ -12,9 +12,16 @@
 # MAGIC
 # MAGIC The steps performed in this notebook illustrate how you may prepare the assets required to run the OSRM Backend Server within a Databricks cluster.  These steps are performed infrequently, possibly even once, ahead of the launching of an OSRM-equipped Databricks cluster.  
 # MAGIC
-# MAGIC To perform this work, it is recommended you run Databricks as a single-node cluster, *i.e.* a cluster with only a driver and no worker nodes. (To deploy a single node cluster, select *single node* from the *Cluster Mode* drop-down found at the top of the *Create Cluster* page.) The driver server needs to have a very large volume of RAM assigned to it relative to the size of the map files to be processed.  To give a general sense of the sizing of the driver node, we found a 128 GB RAM driver node was required to process the 11.5 GB North American *.osm.pbf* map file downloaded from the [GeoFabrik website](https://download.geofabrik.de/).
+# MAGIC To perform this work, it is recommended you run Databricks as a single-node cluster, *i.e.* a cluster with only a driver and no worker nodes. (To deploy a single node cluster, select *single node* from the *Cluster Mode* drop-down found at the top of the *Create Cluster* page.) The driver server needs to have a very large volume of RAM assigned to it relative to the size of the map files to be processed.  To give a general sense of the sizing of the driver node, we found a 128 GB RAM driver node was required to process the 11.5 GB North American *.osm.pbf* map file downloaded from the [GeoFabrik website](https://download.geofabrik.de/). For the Indiana example in this demo far less memory is required.
 # MAGIC </p>
 # MAGIC <img src='https://brysmiwasb.blob.core.windows.net/demos/images/osrm_preprocessing_deployment2.png' width=500>
+
+# COMMAND ----------
+
+# DBTITLE 1,Config
+catalog = "josh_melton"
+schema = "routing"
+volume = "osrm_backend"
 
 # COMMAND ----------
 
@@ -27,7 +34,7 @@ spark.sql(f'create volume if not exists {volume}')
 
 # COMMAND ----------
 
-# DBTITLE 1,Set
+# DBTITLE 1,Set Environment Variables
 import os
 os.environ['CATALOG'] = catalog
 os.environ['SCHEMA'] = schema
@@ -90,6 +97,7 @@ os.environ['VOLUME'] = volume
 
 # COMMAND ----------
 
+# DBTITLE 1,Build OSRM
 # MAGIC %sh -e
 # MAGIC source /Volumes/$CATALOG/$SCHEMA/$VOLUME/osrm_env.sh
 # MAGIC # 1. clean up any previous attempt
@@ -112,6 +120,7 @@ os.environ['VOLUME'] = volume
 
 # COMMAND ----------
 
+# DBTITLE 1,Copy and Source OSRM
 # MAGIC %sh 
 # MAGIC source /Volumes/$CATALOG/$SCHEMA/$VOLUME/osrm_env.sh
 # MAGIC cp -RL "$SRC_ROOT"        "$VOLUME_BASE/osrm-src"
@@ -151,6 +160,7 @@ os.environ['VOLUME'] = volume
 
 # COMMAND ----------
 
+# DBTITLE 1,Launch OSRM Router
 # MAGIC %sh -e
 # MAGIC source /Volumes/$CATALOG/$SCHEMA/$VOLUME/osrm_env.sh
 # MAGIC rm -rf "$LOCAL_OSRM"
@@ -163,8 +173,39 @@ os.environ['VOLUME'] = volume
 
 # COMMAND ----------
 
+# DBTITLE 1,Test
 # MAGIC %sh
 # MAGIC curl -v "http://localhost:5100/route/v1/driving/39.204907,-86.520124;39.78208,-86.077596?overview=false"
+
+# COMMAND ----------
+
+# DBTITLE 1,Update init script
+import os
+import re
+from pathlib import Path
+
+script_path = Path(os.getcwd()) / "osrm-backend.sh"
+volume_base = f"/Volumes/{catalog}/{schema}/{volume}"
+new_source_line = f"source {volume_base}/osrm_env.sh"
+content = script_path.read_text()
+
+# Regex:   ^source .*osrm_env\.sh.*$  (anchored, works even if there’s a comment)
+patched = re.sub(
+    r"^source\s+.*osrm_env\.sh.*$",
+    new_source_line,
+    content,
+    flags=re.MULTILINE,
+)
+
+# Safety net: raise if we never touched the file
+if patched == content:
+    raise RuntimeError(
+        "No line containing 'osrm_env.sh' was found – "
+        "check the script path or regex."
+    )
+
+script_path.write_text(patched)
+print(f"✔ Patched {script_path.name} → {new_source_line}")
 
 # COMMAND ----------
 
@@ -201,10 +242,13 @@ os.environ['VOLUME'] = volume
 # MAGIC
 # MAGIC &copy; 2025 Databricks, Inc. All rights reserved. The source in this notebook is provided subject to the [Databricks License](https://databricks.com/db-license-source).  All included or referenced third party libraries are subject to the licenses set forth below.
 # MAGIC
-# MAGIC | library                                | description             | license    | source                                              |
-# MAGIC |----------------------------------------|-------------------------|------------|-----------------------------------------------------|
-# MAGIC | OSRM Backend Server                                  | High performance routing engine written in C++14 designed to run on OpenStreetMap data | BSD 2-Clause "Simplified" License    | https://github.com/Project-OSRM/osrm-backend                   |
-# MAGIC | osmnx        | Download, model, analyze, and visualize street networks and other geospatial features from OpenStreetMap in Python | MIT License            | https://github.com/gboeing/osmnx                    |
-# MAGIC | ortools      | Operations research tools developed at Google for combinatorial optimization | Apache License 2.0     | https://github.com/google/or-tools                   |
-# MAGIC | folium       | Visualize data in Python on interactive Leaflet.js maps                      | MIT License            | https://github.com/python-visualization/folium       |
-# MAGIC
+# MAGIC | library                | description                                                                                      | license      | source                                                    |
+# MAGIC |------------------------|--------------------------------------------------------------------------------------------------|--------------|-----------------------------------------------------------|
+# MAGIC | OSRM Backend Server    | High performance routing engine written in C++14 designed to run on OpenStreetMap data           | BSD 2-Clause "Simplified" License | https://github.com/Project-OSRM/osrm-backend              |
+# MAGIC | osmnx                  | Download, model, analyze, and visualize street networks and other geospatial features from OpenStreetMap in Python | MIT License  | https://github.com/gboeing/osmnx                          |
+# MAGIC | ortools                | Operations research tools developed at Google for combinatorial optimization                     | Apache License 2.0 | https://github.com/google/or-tools                        |
+# MAGIC | folium                 | Visualize data in Python on interactive Leaflet.js maps                                          | MIT License  | https://github.com/python-visualization/folium            |
+# MAGIC | dash                   | Python framework for building analytical web applications and dashboards; built on Flask, React, and Plotly.js | MIT License  | https://github.com/plotly/dash                            |
+# MAGIC | branca                 | Library for generating complex HTML+JS pages in Python; provides non-map-specific features for folium | MIT License  | https://github.com/python-visualization/branca            |
+# MAGIC | plotly                 | Open-source Python library for creating interactive, publication-quality charts and graphs        | MIT License  | https://github.com/plotly/plotly.py                       |
+# MAGIC ray |	Flexible, high-performance distributed execution framework for scaling Python workflows |	Apache2.0 |	https://github.com/ray-project/ray

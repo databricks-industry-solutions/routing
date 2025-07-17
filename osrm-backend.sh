@@ -1,7 +1,5 @@
 #!/bin/bash
 
-# if [[ $DB_IS_DRIVER != "TRUE" ]]; then  
-
 echo "installing osrm backend server dependencies"
 sudo apt-get update -qq
 sudo apt-get install -y --no-install-recommends \
@@ -12,7 +10,7 @@ sudo apt-get install -y --no-install-recommends \
       libxml2-dev
 
 echo "launching osrm backend server"
-source /Volumes/josh_melton/routing/osrm_backend/osrm_env.sh          # TODO: change path
+source /Volumes/josh_melton/routing/osrm_backend/osrm_env.sh
 rm -rf "$LOCAL_OSRM"
 time cp -R "$VOLUME_BASE" "$LOCAL_OSRM"          # measure copy time
 
@@ -48,4 +46,3 @@ do
 
 done  
   
-# fi
