@@ -40,7 +40,7 @@ cluster_config = {
     "spark_version": "16.4.x-cpu-ml-scala2.12",
     "autoscale": None,
     "init_scripts": [init_script],
-    "autotermination_minutes": 65,
+    "autotermination_minutes": 15,
     "data_security_mode": DataSecurityMode.SINGLE_USER,
     "single_user_name": w.current_user.me().user_name,
     "spark_conf": {
