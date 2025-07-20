@@ -1,0 +1,115 @@
+{
+  "datasets": [
+    {
+      "name": "9c92eafa",
+      "displayName": "optimized_routes",
+      "queryLines": [
+        "SELECT * \n",
+        "FROM josh_melton.routing.optimized_routes"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "9aa4b4d5",
+      "displayName": "Routes Map",
+      "layout": [
+        {
+          "widget": {
+            "name": "92786852",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "9c92eafa",
+                  "fields": [
+                    {
+                      "name": "cluster_id",
+                      "expression": "`cluster_id`"
+                    },
+                    {
+                      "name": "latitude",
+                      "expression": "`latitude`"
+                    },
+                    {
+                      "name": "longitude",
+                      "expression": "`longitude`"
+                    },
+                    {
+                      "name": "route_index",
+                      "expression": "`route_index`"
+                    },
+                    {
+                      "name": "truck_type",
+                      "expression": "`truck_type`"
+                    },
+                    {
+                      "name": "package_id",
+                      "expression": "`package_id`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "symbol-map",
+              "encodings": {
+                "coordinates": {
+                  "latitude": {
+                    "fieldName": "latitude",
+                    "displayName": "latitude"
+                  },
+                  "longitude": {
+                    "fieldName": "longitude",
+                    "displayName": "longitude"
+                  }
+                },
+                "color": {
+                  "fieldName": "cluster_id",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "natural-order"
+                    }
+                  },
+                  "displayName": "Route"
+                },
+                "extra": [
+                  {
+                    "fieldName": "route_index",
+                    "displayName": "Route Package Number"
+                  },
+                  {
+                    "fieldName": "truck_type",
+                    "displayName": "Truck Type"
+                  },
+                  {
+                    "fieldName": "package_id",
+                    "displayName": "Package ID"
+                  }
+                ]
+              },
+              "mark": {
+                "opacity": 0.49
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 12
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    }
+  }
+}
