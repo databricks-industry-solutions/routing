@@ -539,4 +539,4 @@ def update_route_order_in_db(cluster_id, new_sequence):
         print(f"❌ Error updating route order: {e}")
 
 if __name__ == '__main__':
-    app.run_server(debug=True, host='0.0.0.0', port=8050) 
+    app.run_server(debug=True, host='0.0.0.0', port=8000) 
