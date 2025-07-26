@@ -1,5 +1,5 @@
 folium==0.20.0
-dash==2.14.1
+dash==2.15.0
 pandas==2.1.4
 databricks-sdk==0.20.0
 branca==0.6.0
