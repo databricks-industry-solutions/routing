@@ -1,0 +1,4 @@
+command: ['python', 'app.py']
+env:
+  - name: DATABRICKS_WAREHOUSE_ID    
+    value: '148ccb90800933a1' 
