@@ -50,4 +50,4 @@ resources:
            - task_key: build_osrm_map
           job_cluster_key: solver_cluster
           notebook_task:
-            notebook_path: "03_route_optimization.ipynb"
+            notebook_path: "03_route_optimization.py"
