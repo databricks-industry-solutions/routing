@@ -175,6 +175,7 @@ os.environ['VOLUME'] = volume
 
 # DBTITLE 1,Test
 # MAGIC %sh
+# MAGIC sleep 3
 # MAGIC curl -v "http://localhost:5000/route/v1/driving/39.204907,-86.520124;39.78208,-86.077596?overview=false"
 
 # COMMAND ----------
@@ -186,7 +187,7 @@ from pathlib import Path
 script_path   = Path.cwd() / "osrm-backend.sh"
 content       = script_path.read_text()
 
-# 1️⃣  Build the new export block
+# Build the new export block
 export_block  = (
     f'export CATALOG="{catalog}"\n'
     f'export SCHEMA="{schema}"\n'
@@ -212,7 +213,7 @@ else:
         flags=re.MULTILINE,
     )
 
-# 2️⃣  Update the dynamic source line
+# Update the dynamic source line
 volume_base   = f"/Volumes/{catalog}/{schema}/{volume}"
 new_source    = f"source {volume_base}/osrm_env.sh"
 content       = re.sub(
@@ -222,7 +223,7 @@ content       = re.sub(
     flags=re.MULTILINE,
 )
 
-# 3️⃣  Write back if anything changed
+# Write back if anything changed
 script_path.write_text(content)
 print(f"✔ Patched {script_path.name}\n"
       f"  • CATALOG={catalog}, SCHEMA={schema}, VOLUME={volume}\n"

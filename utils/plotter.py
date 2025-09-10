@@ -26,7 +26,7 @@ def plot_route_folium(solution_df):
             fill=True,
             fill_color=colormap(row['route_index']),
             fill_opacity=0.9,
-            popup=f"Order: {row['route_index']}<br>Package: {row['package_id']}"
+            popup=f"Order: {row['route_index']}<br>Package: {row['origin_id']}"
         ).add_to(m)
 
     # Draw the route as a line colored by order
