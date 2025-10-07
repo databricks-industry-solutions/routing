@@ -37,7 +37,7 @@ cluster_config = {
     "cluster_name": "Routing Optimization Cluster",
     "num_workers": 4,
     "node_type_id": node_type,
-    "spark_version": "16.4.x-cpu-ml-scala2.12",
+    "spark_version": "17.2.x-cpu-ml-scala2.13",
     "autoscale": None,
     "init_scripts": [init_script],
     "autotermination_minutes": 15,
