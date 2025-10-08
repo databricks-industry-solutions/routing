@@ -77,7 +77,7 @@ from pyspark.databricks.sql import functions as DBF  # Databricks spatial/H3
 H3_RES = 8
 K_RING = 5
 
-TOP_K = 25
+TOP_K = 50
 MIN_CAND = 20
 BOOST_RING_DELTA = 5
 PARENT_RING = 2
