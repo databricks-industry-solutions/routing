@@ -37,7 +37,7 @@ cluster_config = {
     "cluster_name": "Routing Optimization Cluster",
     "num_workers": 4,
     "node_type_id": node_type,
-    "spark_version": "16.4.x-cpu-ml-scala2.12",
+    "spark_version": "17.2.x-cpu-ml-scala2.13",
     "autoscale": None,
     "init_scripts": [init_script],
     "autotermination_minutes": 15,
@@ -92,9 +92,10 @@ except ResourceAlreadyExists:
 # MAGIC |------------------------|--------------------------------------------------------------------------------------------------|--------------|-----------------------------------------------------------|
 # MAGIC | OSRM Backend Server    | High performance routing engine written in C++14 designed to run on OpenStreetMap data           | BSD 2-Clause "Simplified" License | https://github.com/Project-OSRM/osrm-backend              |
 # MAGIC | osmnx                  | Download, model, analyze, and visualize street networks and other geospatial features from OpenStreetMap in Python | MIT License  | https://github.com/gboeing/osmnx                          |
-# MAGIC | ortools                | Operations research tools developed at Google for combinatorial optimization                     | Apache License 2.0 | https://github.com/google/or-tools                        |
+# MAGIC | ortools                | Operations research tools developed at Google for combinatorial optimization                     | Apache 2.0 | https://github.com/google/or-tools                        |
 # MAGIC | folium                 | Visualize data in Python on interactive Leaflet.js maps                                          | MIT License  | https://github.com/python-visualization/folium            |
 # MAGIC | dash                   | Python framework for building analytical web applications and dashboards; built on Flask, React, and Plotly.js | MIT License  | https://github.com/plotly/dash                            |
 # MAGIC | branca                 | Library for generating complex HTML+JS pages in Python; provides non-map-specific features for folium | MIT License  | https://github.com/python-visualization/branca            |
 # MAGIC | plotly                 | Open-source Python library for creating interactive, publication-quality charts and graphs        | MIT License  | https://github.com/plotly/plotly.py                       |
-# MAGIC ray |	Flexible, high-performance distributed execution framework for scaling Python workflows |	Apache2.0 |	https://github.com/ray-project/ray
+# MAGIC ray |	Flexible, high-performance distributed execution framework for scaling Python workflows |	Apache 2.0 |	https://github.com/ray-project/ray
+# MAGIC cuOpt | GPU-accelerated combinatorial optimization solver from NVIDIA | Apache 2.0 | https://docs.nvidia.com/cuopt/user-guide/latest/license.html

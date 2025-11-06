@@ -175,6 +175,7 @@ os.environ['VOLUME'] = volume
 
 # DBTITLE 1,Test
 # MAGIC %sh
+# MAGIC sleep 3
 # MAGIC curl -v "http://localhost:5000/route/v1/driving/39.204907,-86.520124;39.78208,-86.077596?overview=false"
 
 # COMMAND ----------
@@ -186,7 +187,7 @@ from pathlib import Path
 script_path   = Path.cwd() / "osrm-backend.sh"
 content       = script_path.read_text()
 
-# 1️⃣  Build the new export block
+# Build the new export block
 export_block  = (
     f'export CATALOG="{catalog}"\n'
     f'export SCHEMA="{schema}"\n'
@@ -212,7 +213,7 @@ else:
         flags=re.MULTILINE,
     )
 
-# 2️⃣  Update the dynamic source line
+# Update the dynamic source line
 volume_base   = f"/Volumes/{catalog}/{schema}/{volume}"
 new_source    = f"source {volume_base}/osrm_env.sh"
 content       = re.sub(
@@ -222,7 +223,7 @@ content       = re.sub(
     flags=re.MULTILINE,
 )
 
-# 3️⃣  Write back if anything changed
+# Write back if anything changed
 script_path.write_text(content)
 print(f"✔ Patched {script_path.name}\n"
       f"  • CATALOG={catalog}, SCHEMA={schema}, VOLUME={volume}\n"
@@ -268,9 +269,10 @@ print(f"✔ Patched {script_path.name}\n"
 # MAGIC |------------------------|--------------------------------------------------------------------------------------------------|--------------|-----------------------------------------------------------|
 # MAGIC | OSRM Backend Server    | High performance routing engine written in C++14 designed to run on OpenStreetMap data           | BSD 2-Clause "Simplified" License | https://github.com/Project-OSRM/osrm-backend              |
 # MAGIC | osmnx                  | Download, model, analyze, and visualize street networks and other geospatial features from OpenStreetMap in Python | MIT License  | https://github.com/gboeing/osmnx                          |
-# MAGIC | ortools                | Operations research tools developed at Google for combinatorial optimization                     | Apache License 2.0 | https://github.com/google/or-tools                        |
+# MAGIC | ortools                | Operations research tools developed at Google for combinatorial optimization                     | Apache 2.0 | https://github.com/google/or-tools                        |
 # MAGIC | folium                 | Visualize data in Python on interactive Leaflet.js maps                                          | MIT License  | https://github.com/python-visualization/folium            |
 # MAGIC | dash                   | Python framework for building analytical web applications and dashboards; built on Flask, React, and Plotly.js | MIT License  | https://github.com/plotly/dash                            |
 # MAGIC | branca                 | Library for generating complex HTML+JS pages in Python; provides non-map-specific features for folium | MIT License  | https://github.com/python-visualization/branca            |
 # MAGIC | plotly                 | Open-source Python library for creating interactive, publication-quality charts and graphs        | MIT License  | https://github.com/plotly/plotly.py                       |
-# MAGIC ray |	Flexible, high-performance distributed execution framework for scaling Python workflows |	Apache2.0 |	https://github.com/ray-project/ray
+# MAGIC ray |	Flexible, high-performance distributed execution framework for scaling Python workflows |	Apache 2.0 |	https://github.com/ray-project/ray
+# MAGIC cuOpt | GPU-accelerated combinatorial optimization solver from NVIDIA | Apache 2.0 | https://docs.nvidia.com/cuopt/user-guide/latest/license.html

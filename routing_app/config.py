@@ -5,7 +5,7 @@ DATABRICKS_WAREHOUSE_ID = os.getenv('DATABRICKS_WAREHOUSE_ID', '148ccb90800933a1
 
 
 # Table Configuration
-ROUTES_TABLE = os.getenv('ROUTES_TABLE', 'josh_melton.routing.optimized_routes')
+ROUTES_TABLE = os.getenv('ROUTES_TABLE', 'default.routing.optimized_routes')
 
 # Expected table schema:
 # - cluster_id: identifier for each route
