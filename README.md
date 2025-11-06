@@ -25,7 +25,6 @@ As you plan your cluster deployment topology, it's important to keep in mind tha
 
 To run this accelerator, clone this repo into a Databricks workspace. Execute the notebooks in order, being sure to use the cluster created in notebook 2 for running notebook 3.
 
-
 &copy; 2025 Databricks, Inc. All rights reserved. The source in this notebook is provided subject to the [Databricks License](https://databricks.com/db-license-source).  All included or referenced third party libraries are subject to the licenses set forth below.
 
 | library                | description                                                                                      | license      | source                                                    |
@@ -37,4 +36,5 @@ To run this accelerator, clone this repo into a Databricks workspace. Execute th
 | dash                   | Python framework for building analytical web applications and dashboards; built on Flask, React, and Plotly.js | MIT License  | https://github.com/plotly/dash                            |
 | branca                 | Library for generating complex HTML+JS pages in Python; provides non-map-specific features for folium | MIT License  | https://github.com/python-visualization/branca            |
 | plotly                 | Open-source Python library for creating interactive, publication-quality charts and graphs        | MIT License  | https://github.com/plotly/plotly.py                       |
-ray |	Flexible, high-performance distributed execution framework for scaling Python workflows |	Apache2.0 |	https://github.com/ray-project/ray# Integration test re-trigger
+ray |	Flexible, high-performance distributed execution framework for scaling Python workflows |	Apache2.0 |	https://github.com/ray-project/ray
+cuOpt | GPU-accelerated combinatorial optimization solver from NVIDIA | NVIDIA Proprietary (free for non-commercial use) | https://developer.nvidia.com/cuopt
