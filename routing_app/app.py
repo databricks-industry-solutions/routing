@@ -24,6 +24,12 @@ except Exception as e:
     print("Make sure you've run 'databricks auth login' and have valid credentials")
     exit(1)
 
+if not config.DATABRICKS_WAREHOUSE_ID or config.DATABRICKS_WAREHOUSE_ID == "REPLACE_ME":
+    print(
+        "❌ Set DATABRICKS_WAREHOUSE_ID to a Databricks SQL warehouse ID before starting the app"
+    )
+    exit(1)
+
 # App layout
 app.layout = html.Div([
     # Store components for state management

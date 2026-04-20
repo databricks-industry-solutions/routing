@@ -1,53 +1,235 @@
 bundle:
-  name: routing-optimization
+  name: routing-address-first
 
 variables:
-  environment:
-    description: "Deployment environment (dev, staging, prod)"
-    default: dev
+  catalog:
+    description: Unity Catalog catalog for all routing assets and tables
+    default: demos
+  schema:
+    description: Unity Catalog schema for all routing assets and tables
+    default: routing
+  volume:
+    description: Shared managed volume for Photon / OSRM assets
+    default: routing_assets
+  region:
+    description: GeoFabrik region slug
+    default: indiana
+  cpu_spark_version:
+    description: DBR for asset prep, geocoding, and CPU routing
+    default: 17.3.x-cpu-ml-scala2.13
+  gpu_spark_version:
+    description: DBR for cuOpt-based routing
+    default: 17.3.x-gpu-ml-scala2.13
+  cpu_node_type_id:
+    description: CPU node type with local disk
+    default: m5d.4xlarge
+  gpu_node_type_id:
+    description: GPU node type for cuOpt
+    default: g5.2xlarge
 
 targets:
   dev:
     default: true
     mode: development
+    workspace:
+      profile: DEFAULT
 
 resources:
   jobs:
-    demo_workflow:
-      name: "Routing Optimization"
+    routing_end_to_end:
+      name: "[${bundle.target}] Routing Address-First"
+      max_concurrent_runs: 1
 
       job_clusters:
-        - job_cluster_key: osrm_build
+        - job_cluster_key: asset_prep_cluster
           new_cluster:
-            spark_version: "16.4.x-cpu-ml-scala2.12"
-            num_workers: 0          # single driver
-            node_type_id: m5d.4xlarge # or Standard_D4ds_v5 on Azure
+            aws_attributes:
+              availability: SPOT_WITH_FALLBACK
+              first_on_demand: 1
+              zone_id: us-east-2a
+            data_security_mode: SINGLE_USER
+            single_user_name: ${workspace.current_user.userName}
+            spark_version: ${var.cpu_spark_version}
+            node_type_id: ${var.cpu_node_type_id}
+            num_workers: 0
             spark_conf:
-              "spark.databricks.cluster.profile": "singleNode"
-              "spark.master": "local[*]"
+              spark.databricks.cluster.profile: singleNode
+              spark.master: local[*]
             custom_tags:
               ResourceClass: SingleNode
-        - job_cluster_key: solver_cluster
+
+        - job_cluster_key: geocode_cluster
           new_cluster:
-            spark_version: "16.4.x-cpu-ml-scala2.12"
-            node_type_id: m5d.4xlarge
+            aws_attributes:
+              availability: SPOT_WITH_FALLBACK
+              first_on_demand: 1
+              zone_id: us-east-2a
+            data_security_mode: SINGLE_USER
+            single_user_name: ${workspace.current_user.userName}
+            spark_version: ${var.cpu_spark_version}
+            node_type_id: ${var.cpu_node_type_id}
+            num_workers: 2
+            spark_conf:
+              spark.databricks.pyspark.dataFrameChunk.enabled: "true"
+              spark.task.resource.gpu.amount: "0"
+            init_scripts:
+              - volumes:
+                  destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/photon-worker.sh
+              - volumes:
+                  destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/osrm-worker.sh
+
+        - job_cluster_key: cpu_distance_cluster
+          new_cluster:
+            aws_attributes:
+              availability: SPOT_WITH_FALLBACK
+              first_on_demand: 1
+              zone_id: us-east-2a
+            data_security_mode: SINGLE_USER
+            single_user_name: ${workspace.current_user.userName}
+            spark_version: ${var.cpu_spark_version}
+            node_type_id: ${var.cpu_node_type_id}
             num_workers: 4
             spark_conf:
-              "spark.databricks.pyspark.dataFrameChunk.enabled": "true"
-              "spark.task.resource.gpu.amount": "0"
+              spark.databricks.pyspark.dataFrameChunk.enabled: "true"
+              spark.task.resource.gpu.amount: "0"
             init_scripts:
-              - workspace:
-                  destination: "/Users/josh.melton@databricks.com/routing/osrm-backend.sh"
+              - volumes:
+                  destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/osrm-worker.sh
+
+        - job_cluster_key: gpu_distance_cluster
+          new_cluster:
+            aws_attributes:
+              availability: SPOT_WITH_FALLBACK
+              first_on_demand: 1
+              zone_id: us-east-2a
+            data_security_mode: SINGLE_USER
+            single_user_name: ${workspace.current_user.userName}
+            spark_version: ${var.cpu_spark_version}
+            node_type_id: ${var.cpu_node_type_id}
+            num_workers: 2
+            spark_conf:
+              spark.databricks.pyspark.dataFrameChunk.enabled: "true"
+              spark.task.resource.gpu.amount: "0"
+            init_scripts:
+              - volumes:
+                  destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/osrm-worker.sh
+
+        - job_cluster_key: cpu_optimize_cluster
+          new_cluster:
+            aws_attributes:
+              availability: SPOT_WITH_FALLBACK
+              first_on_demand: 1
+              zone_id: us-east-2a
+            data_security_mode: SINGLE_USER
+            single_user_name: ${workspace.current_user.userName}
+            spark_version: ${var.cpu_spark_version}
+            node_type_id: ${var.cpu_node_type_id}
+            num_workers: 4
+            spark_conf:
+              spark.databricks.pyspark.dataFrameChunk.enabled: "true"
+              spark.task.resource.gpu.amount: "0"
+
+        - job_cluster_key: gpu_optimize_cluster
+          new_cluster:
+            aws_attributes:
+              availability: SPOT_WITH_FALLBACK
+              first_on_demand: 1
+              zone_id: us-east-2a
+            data_security_mode: SINGLE_USER
+            single_user_name: ${workspace.current_user.userName}
+            spark_version: ${var.gpu_spark_version}
+            node_type_id: ${var.gpu_node_type_id}
+            num_workers: 0
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: local[*]
+            custom_tags:
+              ResourceClass: SingleNode
 
       tasks:
-        - task_key: build_osrm_map
-          job_cluster_key: osrm_build
+        - task_key: 1_prepare_assets
+          job_cluster_key: asset_prep_cluster
           notebook_task:
-            notebook_path: "01_osrm_server_setup.py"
+            notebook_path: 1-preprocessing-geocoding/01_prepare_assets.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume: ${var.volume}
+              region: ${var.region}
 
-        - task_key: route_optimisation
+        - task_key: 1_validate_services
           depends_on:
-           - task_key: build_osrm_map
-          job_cluster_key: solver_cluster
+            - task_key: 1_prepare_assets
+          job_cluster_key: geocode_cluster
           notebook_task:
-            notebook_path: "03_route_optimization.py"
+            notebook_path: 1-preprocessing-geocoding/02_validate_services.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume: ${var.volume}
+              region: ${var.region}
+
+        - task_key: 1_geocode_addresses
+          depends_on:
+            - task_key: 1_validate_services
+          job_cluster_key: geocode_cluster
+          notebook_task:
+            notebook_path: 1-preprocessing-geocoding/03_geocode_addresses.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              row_limit: "50000"
+
+        - task_key: 2a_cpu_distance
+          depends_on:
+            - task_key: 1_geocode_addresses
+          job_cluster_key: cpu_distance_cluster
+          notebook_task:
+            notebook_path: 2a-cpu-route-optimization/01_distance_calculation.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              shipments_table: raw_shipments
+              num_shipments: "40000"
+              num_routes: "320"
+
+        - task_key: 2a_cpu_optimize
+          depends_on:
+            - task_key: 2a_cpu_distance
+          job_cluster_key: cpu_optimize_cluster
+          notebook_task:
+            notebook_path: 2a-cpu-route-optimization/02_route_optimization.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              num_shipments: "40000"
+              temp_volume: ${var.volume}
+              optimized_routes_table: optimized_routes
+
+        - task_key: 2b_gpu_distance
+          depends_on:
+            - task_key: 1_geocode_addresses
+          job_cluster_key: gpu_distance_cluster
+          notebook_task:
+            notebook_path: 2b-gpu-route-optimization/01_distance_calculation.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              shipments_table: raw_shipments
+              num_shipments: "10000"
+              num_routes: "80"
+
+        - task_key: 2b_gpu_optimize
+          depends_on:
+            - task_key: 2b_gpu_distance
+          job_cluster_key: gpu_optimize_cluster
+          notebook_task:
+            notebook_path: 2b-gpu-route-optimization/02_route_optimization.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              shipments_table: raw_shipments
+              num_shipments: "10000"
+              num_routes: "80"
+              solver_minutes: "20"
+              optimized_routes_table: optimized_routes_gpu_10000
