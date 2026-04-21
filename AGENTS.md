@@ -81,3 +81,7 @@ Do not silently change these contracts. If you must change them, update:
 - `routing_app/config.py` and `routing_app/app.yaml` should keep the SQL warehouse
   environment-specific. Do not hardcode a personal warehouse ID into the repo.
 - `utils/shipments.csv` is a fallback path, not the main story.
+- Keep CPU `cluster_id` values as zero-padded strings so `routing_app/app.py` can continue
+  to sort them lexicographically.
+- If you add or change routing constraints, mirror the new knobs in both the notebook
+  widgets and `databricks.yml` so bundle runs stay reproducible.

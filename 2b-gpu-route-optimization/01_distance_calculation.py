@@ -52,11 +52,37 @@ fallback_path = (repo_root / "utils" / "shipments.csv").resolve()
 print(f"Repo root: {repo_root}")
 print(f"Coordinates-only fallback CSV: {fallback_path}")
 
+
+def geo_distance_meters(lon1, lat1, lon2, lat2):
+    st_distancesphere = getattr(DBF, "st_distancesphere", None)
+    if st_distancesphere is not None:
+        return st_distancesphere(DBF.st_point(lon1, lat1), DBF.st_point(lon2, lat2))
+
+    half = F.lit(0.5)
+    dlat = F.radians(lat2 - lat1)
+    dlon = F.radians(lon2 - lon1)
+    a = F.pow(F.sin(dlat * half), F.lit(2.0)) + F.cos(F.radians(lat1)) * F.cos(
+        F.radians(lat2)
+    ) * F.pow(F.sin(dlon * half), F.lit(2.0))
+    return F.lit(6371008.8) * (F.lit(2.0) * F.asin(F.sqrt(a)))
+
+
+def candidate_counts_for_all_origins(orig_df, pairs_df):
+    return (
+        orig_df.select("origin_id")
+        .join(
+            pairs_df.groupBy("origin_id").agg(F.count("*").alias("cand_cnt")),
+            on="origin_id",
+            how="left",
+        )
+        .withColumn("cand_cnt", F.coalesce(F.col("cand_cnt"), F.lit(0)))
+    )
+
 # COMMAND ----------
 
 # DBTITLE 1,Load shipments
 if spark.catalog.tableExists(shipments_table):
-    shipments_df = spark.read.table(shipments_table).limit(NUM_SHIPMENTS)
+    shipments_df = spark.read.table(shipments_table)
 else:
     if not fallback_path.exists():
         raise FileNotFoundError(f"Fallback CSV not found at {fallback_path}")
@@ -64,7 +90,7 @@ else:
         "Using coordinates-only fallback because "
         f"{shipments_table} does not exist yet."
     )
-    pdf = pd.read_csv(fallback_path).head(NUM_SHIPMENTS)
+    pdf = pd.read_csv(fallback_path)
     shipments_df = spark.createDataFrame(pdf)
 
 required_columns = {"package_id", "city", "latitude", "longitude", "weight"}
@@ -73,14 +99,24 @@ if missing_columns:
     raise ValueError(f"shipments_df is missing columns: {sorted(missing_columns)}")
 
 shipments_df = shipments_df.select(
-    "package_id", "city", "latitude", "longitude", "weight"
-)
+    F.col("package_id").cast("string").alias("package_id"),
+    F.col("city").cast("string").alias("city"),
+    F.col("latitude").cast("double").alias("latitude"),
+    F.col("longitude").cast("double").alias("longitude"),
+    F.coalesce(F.col("weight").cast("double"), F.lit(1.0)).alias("weight"),
+).where(
+    F.col("package_id").isNotNull()
+    & F.col("latitude").isNotNull()
+    & F.col("longitude").isNotNull()
+    & (~F.isnan("latitude"))
+    & (~F.isnan("longitude"))
+).orderBy("package_id").limit(NUM_SHIPMENTS)
 display(shipments_df.limit(10))
 
 # COMMAND ----------
 
 # DBTITLE 1,Add stable global indices
-w = Window.orderBy(F.monotonically_increasing_id())
+w = Window.orderBy("package_id")
 shipments_df_with_idx = shipments_df.withColumn("global_idx", F.row_number().over(w))
 
 depot_row = [("DEPOT", "Indianapolis", DEPOT_LAT, DEPOT_LON, 0.0, 0)]
@@ -165,13 +201,15 @@ pairs = (
 
 pairs = pairs.withColumn(
     "geo_dist",
-    DBF.st_distance(
-        DBF.st_point(F.col("origin_lon"), F.col("origin_lat")),
-        DBF.st_point(F.col("dest_lon"), F.col("dest_lat")),
+    geo_distance_meters(
+        F.col("origin_lon"),
+        F.col("origin_lat"),
+        F.col("dest_lon"),
+        F.col("dest_lat"),
     ),
 ).select("origin_id", "dest_id", "geo_dist", "global_idx_source", "global_idx_dest")
 
-cand_counts = pairs.groupBy("origin_id").agg(F.count("*").alias("cand_cnt"))
+cand_counts = candidate_counts_for_all_origins(orig, pairs)
 sparse = cand_counts.where(F.col("cand_cnt") < MIN_CAND).select("origin_id")
 sparse_orig = orig.join(sparse, "origin_id")
 
@@ -193,20 +231,20 @@ pairs_boost1 = (
     )
     .withColumn(
         "geo_dist",
-        DBF.st_distance(
-            DBF.st_point(F.col("origin_lon"), F.col("origin_lat")),
-            DBF.st_point(F.col("dest_lon"), F.col("dest_lat")),
+        geo_distance_meters(
+            F.col("origin_lon"),
+            F.col("origin_lat"),
+            F.col("dest_lon"),
+            F.col("dest_lat"),
         ),
     )
     .select("origin_id", "dest_id", "geo_dist", "global_idx_source", "global_idx_dest")
 )
 
 pairs_aug1 = pairs.unionByName(pairs_boost1).dropDuplicates(["origin_id", "dest_id"])
-still_sparse = (
-    pairs_aug1.groupBy("origin_id").agg(F.count("*").alias("cand_cnt"))
-    .where(F.col("cand_cnt") < MIN_CAND)
-    .select("origin_id")
-)
+still_sparse = candidate_counts_for_all_origins(orig, pairs_aug1).where(
+    F.col("cand_cnt") < MIN_CAND
+).select("origin_id")
 parent_res = H3_RES - 1
 
 sparse_orig2 = (
@@ -241,9 +279,11 @@ pairs_boost2 = (
     )
     .withColumn(
         "geo_dist",
-        DBF.st_distance(
-            DBF.st_point(F.col("origin_lon"), F.col("origin_lat")),
-            DBF.st_point(F.col("dest_lon"), F.col("dest_lat")),
+        geo_distance_meters(
+            F.col("origin_lon"),
+            F.col("origin_lat"),
+            F.col("dest_lon"),
+            F.col("dest_lat"),
         ),
     )
     .select("origin_id", "dest_id", "geo_dist", "global_idx_source", "global_idx_dest")
@@ -252,7 +292,14 @@ pairs_boost2 = (
 pairs_final = pairs_aug1.unionByName(pairs_boost2).dropDuplicates(["origin_id", "dest_id"])
 topk = (
     pairs_final.withColumn(
-        "rn", F.row_number().over(Window.partitionBy("origin_id").orderBy(F.col("geo_dist").asc()))
+        "rn",
+        F.row_number().over(
+            Window.partitionBy("origin_id").orderBy(
+                F.col("geo_dist").asc(),
+                F.col("dest_id").asc(),
+                F.col("global_idx_dest").asc(),
+            )
+        ),
     )
     .where(F.col("rn") <= TOP_K)
     .select("origin_id", "dest_id", "geo_dist", "global_idx_source", "global_idx_dest")
@@ -262,9 +309,11 @@ depot_dist = (
     orig.select("origin_id", "origin_lat", "origin_lon", "global_idx_source")
     .withColumn(
         "geo_dist",
-        DBF.st_distance(
-            DBF.st_point(F.col("origin_lon"), F.col("origin_lat")),
-            DBF.st_point(F.lit(DEPOT_LON), F.lit(DEPOT_LAT)),
+        geo_distance_meters(
+            F.col("origin_lon"),
+            F.col("origin_lat"),
+            F.lit(DEPOT_LON),
+            F.lit(DEPOT_LAT),
         ),
     )
     .select(
@@ -289,7 +338,9 @@ knn_lists = (
         ).alias("neighbors")
     )
 )
-knn_lists.write.mode("overwrite").option("mergeSchema", "true").saveAsTable(clustered_table)
+knn_lists.write.mode("overwrite").option("overwriteSchema", "true").option(
+    "mergeSchema", "true"
+).saveAsTable(clustered_table)
 display(spark.read.table(clustered_table).limit(10))
 
 # COMMAND ----------
@@ -307,7 +358,7 @@ neighbor_ids_df = (
 )
 needed_ids_df = origin_ids_df.unionByName(neighbor_ids_df).distinct()
 
-pts_df = spark.table(shipments_table).select(
+pts_df = shipments_df.select(
     F.col("package_id").cast("string").alias("pid"),
     F.col("latitude").cast("double").alias("lat"),
     F.col("longitude").cast("double").alias("lon"),
@@ -443,5 +494,7 @@ result_df = (
     knn_df.groupBy("global_idx_source")
     .applyInPandas(osrm_group, schema=schema)
 )
-result_df.write.mode("overwrite").option("mergeSchema", "true").saveAsTable(distances_table)
+result_df.write.mode("overwrite").option("overwriteSchema", "true").option(
+    "mergeSchema", "true"
+).saveAsTable(distances_table)
 display(spark.read.table(distances_table).limit(10))

@@ -231,5 +231,6 @@ resources:
               shipments_table: raw_shipments
               num_shipments: "10000"
               num_routes: "80"
+              max_van: "8000"
               solver_minutes: "20"
               optimized_routes_table: optimized_routes_gpu_10000

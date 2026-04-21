@@ -49,8 +49,7 @@ import numpy as np
 import pandas as pd
 import requests
 import time
-from pyspark.ml.clustering import KMeans
-from pyspark.ml.feature import VectorAssembler
+import math
 from pyspark.sql import functions as F
 
 fallback_path = (repo_root / "utils" / "shipments.csv").resolve()
@@ -61,7 +60,7 @@ print(f"Coordinates-only fallback CSV: {fallback_path}")
 
 # DBTITLE 1,Load shipments
 if spark.catalog.tableExists(shipments_table):
-    shipments_df = spark.read.table(shipments_table).limit(NUM_SHIPMENTS)
+    shipments_df = spark.read.table(shipments_table)
 else:
     if not fallback_path.exists():
         raise FileNotFoundError(f"Fallback CSV not found at {fallback_path}")
@@ -70,7 +69,7 @@ else:
         "Using coordinates-only fallback because "
         f"{shipments_table} does not exist yet."
     )
-    pdf = pd.read_csv(fallback_path).head(NUM_SHIPMENTS)
+    pdf = pd.read_csv(fallback_path)
     shipments_df = spark.createDataFrame(pdf)
 
 required_columns = {"package_id", "city", "latitude", "longitude", "weight"}
@@ -90,7 +89,7 @@ shipments_df = shipments_df.select(
     & F.col("longitude").isNotNull()
     & (~F.isnan("latitude"))
     & (~F.isnan("longitude"))
-)
+).orderBy("package_id").limit(NUM_SHIPMENTS)
 shipment_count = shipments_df.count()
 if shipment_count == 0:
     raise ValueError(
@@ -109,82 +108,124 @@ display(shipments_df.limit(10))
 # COMMAND ----------
 
 # DBTITLE 1,Cluster shipments
-def median_bisect(sdf, cid, max_weight):
-    bounds = (
-        sdf.agg(
-            F.max("latitude").alias("lat_max"),
-            F.min("latitude").alias("lat_min"),
-            F.max("longitude").alias("lon_max"),
-            F.min("longitude").alias("lon_min"),
-        ).collect()[0]
-    )
-    lat_range = bounds.lat_max - bounds.lat_min
-    lon_range = bounds.lon_max - bounds.lon_min
-    axis = "latitude" if lat_range >= lon_range else "longitude"
-    median = sdf.approxQuantile(axis, [0.5], 0.01)[0]
+def haversine_meters(lat1, lon1, lat2, lon2):
+    lat1_rad = np.radians(lat1)
+    lon1_rad = np.radians(lon1)
+    lat2_rad = np.radians(lat2)
+    lon2_rad = np.radians(lon2)
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+    a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(
+        dlon / 2.0
+    ) ** 2
+    return 6371008.8 * (2.0 * np.arcsin(np.sqrt(a)))
 
-    return sdf.withColumn(
-        "cluster_id",
-        F.when(F.col(axis) <= median, F.lit(f"{cid}-1")).otherwise(F.lit(f"{cid}-2")),
-    )
+
+def assign_sweep_clusters(weights, requested_routes, max_weight):
+    if not len(weights):
+        return []
+
+    assignments = np.empty(len(weights), dtype=np.int32)
+    current_cluster = 0
+    current_weight = 0.0
+    current_count = 0
+    planned_routes = max(1, min(int(requested_routes), len(weights)))
+
+    for idx, weight in enumerate(weights):
+        if weight > max_weight:
+            raise ValueError(
+                f"Shipment weight {weight} exceeds the configured max_van {max_weight}."
+            )
+
+        remaining_items = len(weights) - idx
+        remaining_planned_clusters = max(planned_routes - current_cluster, 1)
+        target_count = math.ceil(remaining_items / remaining_planned_clusters)
+
+        should_split_for_balance = (
+            current_count > 0
+            and current_cluster < planned_routes - 1
+            and current_count >= target_count
+        )
+        should_split_for_capacity = (
+            current_count > 0 and current_weight + float(weight) > max_weight
+        )
+
+        if should_split_for_balance or should_split_for_capacity:
+            current_cluster += 1
+            current_weight = 0.0
+            current_count = 0
+
+        assignments[idx] = current_cluster
+        current_weight += float(weight)
+        current_count += 1
+
+    return assignments
 
 
 def build_clusters(source_df, requested_routes, max_weight=MAX_VAN):
-    vec = VectorAssembler(
-        inputCols=["latitude", "longitude"],
-        outputCol="features",
-        handleInvalid="skip",
-    ).transform(source_df)
+    source_pdf = source_df.toPandas()
+    if source_pdf.empty:
+        raise ValueError("No shipments available to cluster.")
 
-    base_model = KMeans(k=requested_routes, seed=1).fit(vec.select("features"))
-    clustered = (
-        base_model.transform(vec)
-        .withColumnRenamed("prediction", "cluster_id")
-        .withColumn("cluster_id", F.col("cluster_id").cast("string"))
-        .drop("features")
+    if max_weight <= 0:
+        raise ValueError("max_van must be positive.")
+
+    source_pdf["weight"] = source_pdf["weight"].fillna(0.0).astype(float)
+    source_pdf["theta"] = np.arctan2(
+        source_pdf["latitude"].to_numpy(dtype=float) - DEPOT_LAT,
+        source_pdf["longitude"].to_numpy(dtype=float) - DEPOT_LON,
     )
+    source_pdf["radius_m"] = haversine_meters(
+        DEPOT_LAT,
+        DEPOT_LON,
+        source_pdf["latitude"].to_numpy(dtype=float),
+        source_pdf["longitude"].to_numpy(dtype=float),
+    )
+    source_pdf = source_pdf.sort_values(
+        ["theta", "radius_m", "package_id"], kind="mergesort"
+    ).reset_index(drop=True)
 
-    heavy_ids = [
-        row["cluster_id"]
-        for row in (
-            clustered.groupBy("cluster_id")
-            .agg(F.sum("weight").alias("total_weight"))
-            .filter(F.col("total_weight") > max_weight)
-            .select("cluster_id")
-            .distinct()
-            .collect()
+    total_weight = float(source_pdf["weight"].sum())
+    min_routes_by_weight = max(1, math.ceil(total_weight / max_weight))
+    target_routes = max(1, min(int(requested_routes), len(source_pdf)))
+    if target_routes < min_routes_by_weight:
+        print(
+            f"Requested {target_routes} routes but shipment weight requires at least "
+            f"{min_routes_by_weight}; using the larger count."
         )
-    ]
-    print("Over-capacity clusters:", heavy_ids or "none")
+        target_routes = min_routes_by_weight
 
-    if heavy_ids:
-        from functools import reduce
-
-        heavy_df = clustered.filter(F.col("cluster_id").isin(heavy_ids))
-        keep_df = clustered.filter(~F.col("cluster_id").isin(heavy_ids))
-        split_frames = [
-            median_bisect(heavy_df.filter(F.col("cluster_id") == cid), cid, max_weight)
-            for cid in heavy_ids
-        ]
-        split_df = reduce(lambda left, right: left.unionByName(right), split_frames)
-        clustered = keep_df.unionByName(split_df)
-
-    return clustered.withColumn("cluster_id", F.col("cluster_id").cast("string"))
-
-
-if spark.catalog.tableExists(clustered_table):
-    clustered_df = spark.read.table(clustered_table).withColumn(
-        "cluster_id", F.col("cluster_id").cast("string")
+    source_pdf["cluster_num"] = assign_sweep_clusters(
+        source_pdf["weight"].to_numpy(dtype=float),
+        requested_routes=target_routes,
+        max_weight=max_weight,
     )
-else:
-    clustered_df = build_clusters(
-        shipments_df,
-        requested_routes=effective_num_routes,
-        max_weight=MAX_VAN,
+
+    actual_routes = int(source_pdf["cluster_num"].max()) + 1
+    cluster_width = max(3, len(str(max(actual_routes, target_routes))))
+    source_pdf["cluster_id"] = source_pdf["cluster_num"].map(
+        lambda cid: f"{int(cid) + 1:0{cluster_width}d}"
     )
-    clustered_df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(
-        clustered_table
+
+    print(
+        "Sweep-clustered "
+        f"{len(source_pdf):,} shipments into {actual_routes} route(s) "
+        f"with requested target {target_routes} and max_van {max_weight:.0f}."
     )
+
+    return spark.createDataFrame(
+        source_pdf[["package_id", "city", "latitude", "longitude", "weight", "cluster_id"]]
+    )
+
+
+clustered_df = build_clusters(
+    shipments_df,
+    requested_routes=effective_num_routes,
+    max_weight=MAX_VAN,
+).cache()
+clustered_df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(
+    clustered_table
+)
 
 display(
     clustered_df.groupBy("cluster_id")

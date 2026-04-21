@@ -22,6 +22,7 @@ dbutils.widgets.text("shipments_table", "raw_shipments", "Input shipments table 
 dbutils.widgets.text("num_shipments", "10000", "Shipment count suffix")
 dbutils.widgets.text("num_routes", "80", "Number of vehicles")
 dbutils.widgets.text("max_ev", "4000", "Maximum EV capacity")
+dbutils.widgets.text("max_van", "8000", "Maximum van capacity")
 dbutils.widgets.text("max_route_seconds", "32400", "Maximum route seconds")
 dbutils.widgets.text("solver_minutes", "20", "cuOpt solver time limit in minutes")
 dbutils.widgets.text(
@@ -36,6 +37,7 @@ shipments_table_name = dbutils.widgets.get("shipments_table")
 NUM_SHIPMENTS = int(dbutils.widgets.get("num_shipments"))
 NUM_ROUTES = int(dbutils.widgets.get("num_routes"))
 MAX_EV = float(dbutils.widgets.get("max_ev"))
+MAX_VAN = float(dbutils.widgets.get("max_van"))
 MAX_ROUTE_SECONDS = int(dbutils.widgets.get("max_route_seconds"))
 SOLVER_MINUTES = int(dbutils.widgets.get("solver_minutes"))
 optimized_routes_table_name = dbutils.widgets.get("optimized_routes_table")
@@ -88,7 +90,11 @@ if pdf.empty:
     )
 
 all_nodes = pd.Index(
-    pd.unique(pd.concat([pdf["global_idx_source"], pdf["global_idx_dest"]], ignore_index=True))
+    sorted(
+        pd.unique(
+            pd.concat([pdf["global_idx_source"], pdf["global_idx_dest"]], ignore_index=True)
+        )
+    )
 )
 node2pos = {int(global_idx): i for i, global_idx in enumerate(all_nodes)}
 
@@ -111,6 +117,29 @@ targets = np.array([node2pos[DEPOT_ID]] + [node2pos[node] for node in order_glob
 cost = waypoint_graph.compute_cost_matrix(targets)
 time = cost.copy(deep=True)
 
+weight_lookup = (
+    spark.read.table(mapping_table)
+    .select(
+        F.col("package_id").cast("string").alias("package_id"),
+        F.col("global_idx").cast("int").alias("global_idx"),
+    )
+    .join(
+        spark.read.table(shipments_table).select(
+            F.col("package_id").cast("string").alias("package_id"),
+            F.col("weight").cast("double").alias("weight"),
+        ),
+        on="package_id",
+        how="left",
+    )
+    .select(
+        "global_idx",
+        F.ceil(F.coalesce(F.col("weight"), F.lit(0.0))).cast("int").alias("demand"),
+    )
+    .toPandas()
+    .set_index("global_idx")["demand"]
+    .to_dict()
+)
+
 # COMMAND ----------
 
 # DBTITLE 1,Solve with cuOpt
@@ -119,6 +148,20 @@ n_orders = len(order_globals)
 if n_orders == 0:
     raise ValueError(
         f"{distances_table} did not contain any non-depot orders to optimize."
+    )
+
+order_demand = np.array(
+    [int(weight_lookup.get(global_idx, 0)) for global_idx in order_globals],
+    dtype=np.int32,
+)
+
+max_van_capacity = int(MAX_VAN)
+if max_van_capacity <= 0:
+    raise ValueError("max_van must be positive.")
+heaviest = int(order_demand.max()) if n_orders else 0
+if heaviest > max_van_capacity:
+    raise ValueError(
+        f"At least one shipment demand ({heaviest}) exceeds max_van ({max_van_capacity})."
     )
 
 effective_num_routes = min(NUM_ROUTES, n_orders)
@@ -139,6 +182,11 @@ data_model.set_vehicle_max_times(
 )
 data_model.add_cost_matrix(cost)
 data_model.add_transit_time_matrix(time)
+data_model.add_capacity_dimension(
+    "weight",
+    cudf.Series(order_demand),
+    cudf.Series(np.full(effective_num_routes, max_van_capacity, dtype=np.int32)),
+)
 data_model.set_min_vehicles(effective_num_routes)
 
 solver_settings = routing.SolverSettings()
