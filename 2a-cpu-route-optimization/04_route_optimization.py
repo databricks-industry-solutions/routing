@@ -1,9 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # CPU route optimization
+# MAGIC # Stage 2a-4: CPU route optimization
 # MAGIC
 # MAGIC This notebook uses Ray plus OR-Tools to solve each clustered route independently and
 # MAGIC writes the final CPU-optimized routes to `demos.routing.optimized_routes`.
+# MAGIC
+# MAGIC Recommended compute: classic single-user cluster with Ray plus the shared temp
+# MAGIC volume. The bundle runs this on `cpu_optimize_cluster`.
 
 # COMMAND ----------
 
@@ -182,9 +185,11 @@ def solve_single_route_from_matrix(pdf: pd.DataFrame) -> pd.DataFrame:
     while not routing.IsEnd(idx):
         current_node = manager.IndexToNode(idx)
         next_idx = solution.Value(routing.NextVar(idx))
-        next_node = manager.IndexToNode(next_idx)
-        if not routing.IsEnd(next_idx):
-            route_pairs.append((step, current_node, next_node, duration_matrix[current_node][next_node]))
+        next_node = 0 if routing.IsEnd(next_idx) else manager.IndexToNode(next_idx)
+        if current_node != 0:
+            route_pairs.append(
+                (step, current_node, next_node, duration_matrix[current_node][next_node])
+            )
             step += 1
         idx = next_idx
 

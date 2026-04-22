@@ -1,6 +1,7 @@
 # Stage 2a: CPU route optimization
 
-This stage keeps the original CPU-oriented pattern:
+This stage keeps the original CPU-oriented pattern, but the bundle now splits it across
+serverless Spark prep and classic Ray/OSRM work:
 
 1. cluster shipments with a deterministic depot-anchored sweep
 2. resolve OSRM duration matrices per cluster
@@ -8,11 +9,27 @@ This stage keeps the original CPU-oriented pattern:
 
 ## Notebooks
 
-- `01_distance_calculation.py`
-  Reads `demos.routing.raw_shipments`, deterministically sweep-clusters the data,
-  resolves OSRM durations, and writes the intermediate CPU tables.
-- `02_route_optimization.py`
-  Uses Ray plus OR-Tools to write `demos.routing.optimized_routes`.
+- `01_cluster_shipments.py`
+  Serverless CPU step (environment version 5) that loads shipments and writes the
+  deterministic `shipments_by_route_cpu_*` handoff table.
+- `02_resolve_osrm_distances.py`
+  Classic OSRM step on `cpu_distance_cluster` that writes
+  `distances_by_route_cpu_*`.
+- `03_build_routing_table.py`
+  Serverless CPU step (environment version 5) that writes
+  `routing_unified_by_cluster_cpu_*`.
+- `04_route_optimization.py`
+  Classic Ray + OR-Tools step on `cpu_optimize_cluster` that writes
+  `demos.routing.optimized_routes`.
+- `legacy_distance_calculation.py`
+  Older all-in-one classic notebook retained as a manual fallback.
+
+## Serverless boundary
+
+- Serverless:
+  `01_cluster_shipments.py` and `03_build_routing_table.py`
+- Classic:
+  `02_resolve_osrm_distances.py` and `04_route_optimization.py`
 
 ## Main outputs
 

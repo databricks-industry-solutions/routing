@@ -1,6 +1,7 @@
 # Stage 2b: GPU route optimization
 
-This stage keeps the original GPU-oriented pattern:
+This stage keeps the original GPU-oriented pattern, but the bundle now splits it across
+serverless Spark prep, classic OSRM resolution, and serverless GPU solve:
 
 1. build a deterministic sparse neighbor graph with Databricks geospatial functions
 2. resolve sparse OSRM durations for that graph
@@ -8,12 +9,26 @@ This stage keeps the original GPU-oriented pattern:
 
 ## Notebooks
 
-- `01_distance_calculation.py`
-  Builds the GPU mapping, sparse-neighbor, and OSRM-duration tables with deterministic
-  ordering and geodesic neighbor ranking.
-- `02_route_optimization.py`
-  Converts that sparse graph to a cuOpt waypoint matrix and writes
-  `demos.routing.optimized_routes_gpu_10000` while enforcing van capacity inside the solve.
+- `01_prepare_sparse_graph.py`
+  Serverless CPU step (environment version 5) that builds the deterministic mapping and
+  sparse-neighbor tables.
+- `02_resolve_sparse_osrm.py`
+  Classic OSRM step on `gpu_distance_cluster` that writes
+  `distances_by_route_gpu_*`.
+- `03_route_optimization.py`
+  Serverless GPU step on the A10-backed `serverless_gpu` environment that converts the
+  sparse graph to a cuOpt waypoint matrix and writes
+  `demos.routing.optimized_routes_gpu_10000` while enforcing van capacity inside the
+  solve.
+- `legacy_distance_calculation.py`
+  Older all-in-one classic notebook retained as a manual fallback.
+
+## Serverless boundary
+
+- Serverless:
+  `01_prepare_sparse_graph.py` and `03_route_optimization.py`
+- Classic:
+  `02_resolve_sparse_osrm.py`
 
 ## Main outputs
 

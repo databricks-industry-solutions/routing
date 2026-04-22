@@ -1,13 +1,13 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # CPU distance calculation
+# MAGIC # Stage 2a-1: Cluster shipments for CPU routing
 # MAGIC
-# MAGIC This notebook reads the routing-ready shipments produced by stage 1, clusters them
-# MAGIC for route optimization, calls the local OSRM table API on each executor, and writes
-# MAGIC the duration matrix used by CPU route optimization.
+# MAGIC This serverless-friendly notebook reads routing-ready shipments, falls back to the
+# MAGIC checked-in coordinates sample if needed, and writes the deterministic clustered handoff
+# MAGIC table used by the classic OSRM matrix step.
 # MAGIC
-# MAGIC If `demos.routing.raw_shipments` is missing, the explicit coordinates-only fallback is
-# MAGIC `../utils/shipments.csv`.
+# MAGIC Recommended compute: serverless CPU notebook. The bundle runs this on the
+# MAGIC `serverless_spark` environment (serverless environment version 5).
 
 # COMMAND ----------
 
@@ -24,16 +24,14 @@ dbutils.widgets.text("depot_lon", "-86.1580", "Depot longitude")
 catalog = dbutils.widgets.get("catalog")
 schema = dbutils.widgets.get("schema")
 shipments_table_name = dbutils.widgets.get("shipments_table")
-NUM_SHIPMENTS = int(dbutils.widgets.get("num_shipments"))
+num_shipments = int(dbutils.widgets.get("num_shipments"))
 num_routes = int(dbutils.widgets.get("num_routes"))
-MAX_VAN = float(dbutils.widgets.get("max_van"))
-DEPOT_LAT = float(dbutils.widgets.get("depot_lat"))
-DEPOT_LON = float(dbutils.widgets.get("depot_lon"))
+max_van = float(dbutils.widgets.get("max_van"))
+depot_lat = float(dbutils.widgets.get("depot_lat"))
+depot_lon = float(dbutils.widgets.get("depot_lon"))
 
 shipments_table = f"{catalog}.{schema}.{shipments_table_name}"
-clustered_table = f"{catalog}.{schema}.shipments_by_route_cpu_{NUM_SHIPMENTS}"
-distances_table = f"{catalog}.{schema}.distances_by_route_cpu_{NUM_SHIPMENTS}"
-routing_table = f"{catalog}.{schema}.routing_unified_by_cluster_cpu_{NUM_SHIPMENTS}"
+clustered_table = f"{catalog}.{schema}.shipments_by_route_cpu_{num_shipments}"
 
 # COMMAND ----------
 
@@ -45,11 +43,9 @@ repo_root = Path.cwd().parent
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
+import math
 import numpy as np
 import pandas as pd
-import requests
-import time
-import math
 from pyspark.sql import functions as F
 
 fallback_path = (repo_root / "utils" / "shipments.csv").resolve()
@@ -69,8 +65,7 @@ else:
         "Using coordinates-only fallback because "
         f"{shipments_table} does not exist yet."
     )
-    pdf = pd.read_csv(fallback_path)
-    shipments_df = spark.createDataFrame(pdf)
+    shipments_df = spark.createDataFrame(pd.read_csv(fallback_path))
 
 required_columns = {"package_id", "city", "latitude", "longitude", "weight"}
 missing_columns = required_columns - set(shipments_df.columns)
@@ -89,7 +84,8 @@ shipments_df = shipments_df.select(
     & F.col("longitude").isNotNull()
     & (~F.isnan("latitude"))
     & (~F.isnan("longitude"))
-).orderBy("package_id").limit(NUM_SHIPMENTS)
+).orderBy("package_id").limit(num_shipments)
+
 shipment_count = shipments_df.count()
 if shipment_count == 0:
     raise ValueError(
@@ -162,7 +158,7 @@ def assign_sweep_clusters(weights, requested_routes, max_weight):
     return assignments
 
 
-def build_clusters(source_df, requested_routes, max_weight=MAX_VAN):
+def build_clusters(source_df, requested_routes, max_weight=max_van):
     source_pdf = source_df.toPandas()
     if source_pdf.empty:
         raise ValueError("No shipments available to cluster.")
@@ -172,12 +168,12 @@ def build_clusters(source_df, requested_routes, max_weight=MAX_VAN):
 
     source_pdf["weight"] = source_pdf["weight"].fillna(0.0).astype(float)
     source_pdf["theta"] = np.arctan2(
-        source_pdf["latitude"].to_numpy(dtype=float) - DEPOT_LAT,
-        source_pdf["longitude"].to_numpy(dtype=float) - DEPOT_LON,
+        source_pdf["latitude"].to_numpy(dtype=float) - depot_lat,
+        source_pdf["longitude"].to_numpy(dtype=float) - depot_lon,
     )
     source_pdf["radius_m"] = haversine_meters(
-        DEPOT_LAT,
-        DEPOT_LON,
+        depot_lat,
+        depot_lon,
         source_pdf["latitude"].to_numpy(dtype=float),
         source_pdf["longitude"].to_numpy(dtype=float),
     )
@@ -221,8 +217,8 @@ def build_clusters(source_df, requested_routes, max_weight=MAX_VAN):
 clustered_df = build_clusters(
     shipments_df,
     requested_routes=effective_num_routes,
-    max_weight=MAX_VAN,
-).cache()
+    max_weight=max_van,
+)
 clustered_df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(
     clustered_table
 )
@@ -236,122 +232,4 @@ display(
     .orderBy(F.col("total_weight").desc())
 )
 
-# COMMAND ----------
-
-# DBTITLE 1,Resolve driving times with OSRM
-def get_driving_times(pdf: pd.DataFrame) -> pd.DataFrame:
-    pdf = pdf.sort_values(["package_id"], kind="mergesort").reset_index(drop=True)
-    coords = [(DEPOT_LON, DEPOT_LAT)] + list(
-        zip(pdf["longitude"].tolist(), pdf["latitude"].tolist())
-    )
-    n = len(coords)
-    if n <= 1:
-        return pd.DataFrame(
-            columns=[
-                "origin_id",
-                "destination_id",
-                "origin_index",
-                "destination_index",
-                "duration_seconds",
-            ]
-        )
-
-    coord_str = ";".join(f"{lon:.6f},{lat:.6f}" for lon, lat in coords)
-
-    def osrm_table(radius=None):
-        extra = ""
-        if radius is not None:
-            radii = ";".join([str(radius)] * n)
-            extra = f"&radiuses={radii}"
-        url = (
-            f"http://127.0.0.1:5000/table/v1/driving/{coord_str}"
-            f"?annotations=duration{extra}"
-        )
-        for attempt in range(5):
-            try:
-                response = requests.get(url, timeout=20)
-                response.raise_for_status()
-                return response.json()
-            except requests.exceptions.ReadTimeout:
-                if attempt < 4:
-                    time.sleep(2**attempt)
-                else:
-                    raise
-
-    payload = osrm_table()
-    if payload.get("code") != "Ok":
-        payload = osrm_table(radius=400)
-    if payload.get("code") != "Ok" or "durations" not in payload:
-        raise RuntimeError(f"OSRM error: {payload}")
-
-    matrix = np.array(payload["durations"], dtype=float)
-    ids = ["DEPOT"] + [str(x) for x in pdf["package_id"].tolist()]
-    rows = []
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            duration = matrix[i, j]
-            rows.append(
-                {
-                    "origin_id": ids[i],
-                    "destination_id": ids[j],
-                    "origin_index": i,
-                    "destination_index": j,
-                    "duration_seconds": float(duration)
-                    if np.isfinite(duration)
-                    else np.nan,
-                }
-            )
-    return pd.DataFrame(rows)
-
-
-driving_distances_df = clustered_df.groupBy("cluster_id").applyInPandas(
-    get_driving_times,
-    schema="""
-        origin_id STRING,
-        destination_id STRING,
-        origin_index INT,
-        destination_index INT,
-        duration_seconds DOUBLE
-    """,
-)
-driving_distances_df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(
-    distances_table
-)
-display(spark.read.table(distances_table))
-
-# COMMAND ----------
-
-# DBTITLE 1,Join durations with shipment metadata
-cluster_metadata = clustered_df.select(
-    F.col("package_id").alias("origin_id"),
-    "cluster_id",
-    "city",
-    "latitude",
-    "longitude",
-    "weight",
-)
-
-routing_df = (
-    spark.read.table(distances_table)
-    .join(cluster_metadata, on="origin_id", how="left")
-    .select(
-        "cluster_id",
-        "origin_id",
-        "destination_id",
-        "origin_index",
-        "destination_index",
-        "duration_seconds",
-        "city",
-        "latitude",
-        "longitude",
-        "weight",
-    )
-)
-routing_df.write.mode("overwrite").option("mergeSchema", "true").option(
-    "overwriteSchema", "true"
-).saveAsTable(
-    routing_table
-)
-display(spark.read.table(routing_table))
+print(f"Wrote clustered CPU shipments to {clustered_table}")

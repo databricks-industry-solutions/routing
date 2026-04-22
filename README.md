@@ -1,6 +1,13 @@
 # Address-First Routing on Databricks
 
-This solution accelerator starts with local address data, geocodes those addresses to
+This solution accelerator now has a staged `0 / 1 / 2a / 2b` story:
+
+1. a small serverless introduction on repo-local coordinate data
+2. address preprocessing plus Photon geocoding
+3. CPU routing with OSRM + OR-Tools
+4. GPU routing with a sparse graph + cuOpt
+
+The main accelerator still starts with local address data, geocodes those addresses to
 latitude/longitude with Photon, and then routes them with either a CPU or GPU solver.
 
 The default sample is vendored into the repo, so the input data path works without any
@@ -12,20 +19,26 @@ index and the Indiana OSRM graph assets.
 - AWS `dev` target via the `DEFAULT` Databricks CLI profile.
 - Azure `azure` target via `adb-984752964297111`
   (`https://adb-984752964297111.11.azuredatabricks.net`).
-- Azure node defaults validated in this repo:
-  - asset prep / CPU distance / CPU optimize: `Standard_D16ds_v5`
+- Azure classic-cluster defaults validated in this repo:
+  - asset prep / CPU OSRM / CPU optimize: `Standard_D16ds_v5`
   - geocode + service validation: `Standard_D32ds_v5`
-  - GPU optimize: `Standard_NV36ads_A10_v5`
+- GPU optimization now runs on serverless GPU with `GPU_1xA10` in the bundle.
+- The serverless GPU notebooks install `cuopt-cu12==25.8.0` in-notebook because
+  scheduled serverless GPU jobs do not support bundle-managed dependency lists.
 
 ## Repo map
 
+- `0-introduction/`
+  Fast serverless-first learning path that uses `utils/shipments.csv` plus synthetic
+  haversine travel times to validate CPU and GPU routing without Photon or OSRM.
 - `1-preprocessing-geocoding/`
-  Builds Photon + OSRM assets, validates executor-local services, and geocodes the
-  vendored Indianapolis-area address sample into `demos.routing.raw_shipments`.
+  Builds Photon + OSRM assets, validates executor-local services, then uses a split
+  serverless/classic flow to materialize `demos.routing.raw_shipments`.
 - `2a-cpu-route-optimization/`
-  Uses OSRM matrices plus OR-Tools on CPU to write `demos.routing.optimized_routes`.
+  Uses a split serverless/classic CPU flow for clustering and OSRM prep, then Ray +
+  OR-Tools on classic compute to write `demos.routing.optimized_routes`.
 - `2b-gpu-route-optimization/`
-  Uses a sparse OSRM neighbor graph plus cuOpt on GPU to write
+  Uses a split serverless/classic GPU prep flow plus cuOpt on serverless GPU to write
   `demos.routing.optimized_routes_gpu_10000`.
 - `data/`
   Contains the vendored Overture-derived address sample and the refresh script used to
@@ -52,6 +65,7 @@ Deploy and run the full workflow on AWS / the default target:
 
 ```bash
 databricks bundle deploy
+databricks bundle run routing_intro
 databricks bundle run routing_end_to_end
 ```
 
@@ -59,23 +73,80 @@ Deploy and run the Azure-validated target:
 
 ```bash
 databricks bundle deploy -t azure
+databricks bundle run routing_intro -t azure
 databricks bundle run routing_end_to_end -t azure
 ```
 
 The `azure` target already pins `targets.azure.workspace.profile`, so do not override it
 with `--profile DEFAULT`.
 
-The workflow order is:
+The recommended workflow order is:
 
-1. `1_prepare_assets`
-2. `1_validate_services`
-3. `1_geocode_addresses`
-4. `2a_cpu_distance`
-5. `2a_cpu_optimize`
-6. `2b_gpu_distance`
-7. `2b_gpu_optimize`
+1. `routing_intro`
+2. `routing_end_to_end`
 
-CPU and GPU optimization run as separate branches after geocoding.
+The hybrid `routing_end_to_end` job then runs:
+
+1. `1a_load_normalize_addresses`
+2. `1_prepare_assets`
+3. `1_validate_services`
+4. `1b_geocode_addresses`
+5. `1c_build_shipments`
+6. `2a_cluster_shipments`
+7. `2a_resolve_osrm`
+8. `2a_finalize_routing`
+9. `2a_cpu_optimize`
+10. `2b_prepare_sparse_graph`
+11. `2b_resolve_sparse_osrm`
+12. `2b_gpu_optimize`
+
+CPU and GPU branches still run in parallel after `1c_build_shipments`.
+
+## Serverless boundary
+
+Serverless is used only where it is a good fit in this repo:
+
+- `0-introduction/`
+- stage 1 address load + normalize
+- stage 1 shipment finalization after Photon
+- CPU clustering and routing-table finalization
+- GPU sparse-graph preparation
+- GPU cuOpt optimization
+
+Classic compute is still required for:
+
+- `1-preprocessing-geocoding/01_prepare_assets.py`
+- `1-preprocessing-geocoding/02_validate_services.py`
+- the Photon call notebook (`04_geocode_addresses_photon.py`)
+- the CPU and GPU OSRM notebooks
+- `2a-cpu-route-optimization/04_route_optimization.py` because it still depends on Ray
+
+## Recommended notebook pairings
+
+The bundle job wiring is the source of truth for compute selection. The checked-in
+`.py` notebook source format does not preserve the UI-only notebook environment metadata
+the same way Jupyter exports do, so the notebook headers and the mappings below document
+the intended pairings for manual runs.
+
+- Serverless CPU environment version 5:
+  `0-introduction/01_cpu_intro.py`,
+  `1-preprocessing-geocoding/03_load_and_normalize_addresses.py`,
+  `1-preprocessing-geocoding/05_build_shipments.py`,
+  `2a-cpu-route-optimization/01_cluster_shipments.py`,
+  `2a-cpu-route-optimization/03_build_routing_table.py`, and
+  `2b-gpu-route-optimization/01_prepare_sparse_graph.py`
+- Serverless GPU environment version 4 on A10:
+  `0-introduction/02_gpu_intro.py` and
+  `2b-gpu-route-optimization/03_route_optimization.py`
+- Classic clusters:
+  `1-preprocessing-geocoding/01_prepare_assets.py` on `asset_prep_cluster`,
+  `1-preprocessing-geocoding/02_validate_services.py` and
+  `1-preprocessing-geocoding/04_geocode_addresses_photon.py` on `geocode_cluster`,
+  `2a-cpu-route-optimization/02_resolve_osrm_distances.py` on
+  `cpu_distance_cluster`,
+  `2a-cpu-route-optimization/04_route_optimization.py` on `cpu_optimize_cluster`,
+  and `2b-gpu-route-optimization/02_resolve_sparse_osrm.py` on
+  `gpu_distance_cluster`
 
 If the configured catalog does not exist, `1-preprocessing-geocoding/01_prepare_assets.py`
 fails immediately with:
@@ -91,46 +162,63 @@ the Photon archive is large and must be unpacked locally before it is copied int
 shared volume.
 
 For iterative troubleshooting, use an interactive cluster for stage 1 until the init
-scripts and geocoding logic are stable. Then switch back to the bundle-managed job
-clusters and rerun:
+scripts and geocoding logic are stable. Then switch back to the bundle-managed jobs and
+rerun:
 
 ```bash
-databricks bundle run routing_end_to_end -p DEFAULT
+databricks bundle run routing_intro
+databricks bundle run routing_end_to_end
 ```
 
 ## Observed runtimes
 
 Successful Azure validation on `adb-984752964297111` produced these approximate
-successful-task timings:
+stage-level timings on the classic-first version of the workflow:
 
-- `1_prepare_assets`: ~49 min cold path
-- `1_validate_services`: ~6 min
-- `1_geocode_addresses`: ~9 min
-- `2a_cpu_distance`: ~16 min
-- `2a_cpu_optimize`: ~15 min
-- `2b_gpu_distance`: ~9 min
-- `2b_gpu_optimize`: ~30 min
+- asset prep cold path: ~49 min
+- service validation: ~6 min
+- geocode path combined: ~9 min
+- CPU branch combined: ~31 min
+- GPU branch combined: ~39 min
 
-Because CPU and GPU branches run in parallel after geocoding, the observed cold-start
-wall clock is roughly `100-105` minutes once the workflow is green.
+The hybrid split introduced here changes the task graph, but these numbers remain a good
+order-of-magnitude guide for the heavy classic stages.
 
 ## Manual notebook order
 
 If you prefer to run notebook-by-notebook:
 
-1. Run `1-preprocessing-geocoding/01_prepare_assets.py`.
-2. Attach the rendered init scripts from `/Volumes/demos/routing/routing_assets/init/`
+1. Optional but recommended first run: `0-introduction/01_cpu_intro.py`, then
+   `0-introduction/02_gpu_intro.py`.
+2. Run `1-preprocessing-geocoding/03_load_and_normalize_addresses.py`.
+3. Run `1-preprocessing-geocoding/01_prepare_assets.py`.
+4. Attach the rendered init scripts from `/Volumes/demos/routing/routing_assets/init/`
    to the cluster you will use for geocoding and distance resolution.
-3. Restart that cluster.
-4. Run `1-preprocessing-geocoding/02_validate_services.py`.
-5. Run `1-preprocessing-geocoding/03_geocode_addresses.py`.
-6. Run the CPU path in `2a-cpu-route-optimization/`.
-7. Run the GPU path in `2b-gpu-route-optimization/`.
+5. Restart that cluster.
+6. Run `1-preprocessing-geocoding/02_validate_services.py`.
+7. Run `1-preprocessing-geocoding/04_geocode_addresses_photon.py`.
+8. Run `1-preprocessing-geocoding/05_build_shipments.py`.
+9. Run the CPU path in `2a-cpu-route-optimization/`.
+10. Run the GPU path in `2b-gpu-route-optimization/`.
+
+The older all-in-one notebooks are still in the repo as classic/manual fallbacks:
+
+- `1-preprocessing-geocoding/legacy_geocode_addresses.py`
+- `2a-cpu-route-optimization/legacy_distance_calculation.py`
+- `2b-gpu-route-optimization/legacy_distance_calculation.py`
 
 ## Default tables
 
+- `demos.routing.intro_shipments`
+  Repo-local intro subset used by the serverless-first notebook path.
+- `demos.routing.intro_routes_cpu`
+  Intro CPU routing output.
+- `demos.routing.intro_routes_gpu`
+  Intro GPU routing output.
 - `demos.routing.source_addresses`
   Local address input loaded from the vendored CSV.
+- `demos.routing.normalized_addresses`
+  Deterministic Photon request handoff table produced by the serverless step 3 notebook.
 - `demos.routing.geocoded_addresses`
   Audit table with Photon status and matched coordinates.
 - `demos.routing.raw_shipments`
@@ -156,7 +244,7 @@ not include shipment weights.
 If you already have trusted coordinates:
 
 - Skip Photon and point the CPU or GPU notebooks at your own shipments table, or
-- Use `1-preprocessing-geocoding/03_geocode_addresses.py` with
+- Use `1-preprocessing-geocoding/legacy_geocode_addresses.py` with
   `coordinates_source_table` set to a table that already exposes:
   `package_id`, `city`, `latitude`, `longitude`, `weight`.
 
@@ -174,10 +262,16 @@ Change these places first:
   Stage 1 `region`, `pbf_url`, `photon_db_url`, `photon_health_query`,
   and `osrm_health_route`.
 - Different input data:
-  `1-preprocessing-geocoding/03_geocode_addresses.py` or `data/refresh_overture_indiana_addresses.py`.
+  `1-preprocessing-geocoding/03_load_and_normalize_addresses.py`,
+  `1-preprocessing-geocoding/05_build_shipments.py`, or
+  `data/refresh_overture_indiana_addresses.py`.
 - Different cluster shapes:
-  `databricks.yml` variables `cpu_node_type_id`, `geocode_node_type_id`,
-  `gpu_node_type_id`, `cpu_spark_version`, and `gpu_spark_version`.
+  `databricks.yml` variables `cpu_node_type_id`, `geocode_node_type_id`, and
+  `cpu_spark_version`, plus the serverless GPU accelerator in
+  `resources.jobs.*.tasks.*.compute.hardware_accelerator`.
+- Different serverless/classic boundaries:
+  `resources.jobs.routing_intro`, `resources.jobs.routing_end_to_end`, and
+  `targets.*.resources.jobs.routing_end_to_end.job_clusters` in `databricks.yml`.
 - Different app defaults:
   `routing_app/config.py`, `routing_app/app.yaml`, and `routing_app/README.md`.
 

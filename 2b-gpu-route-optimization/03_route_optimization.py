@@ -1,17 +1,18 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # GPU route optimization with cuOpt
+# MAGIC # Stage 2b-3: GPU route optimization with cuOpt
 # MAGIC
 # MAGIC This notebook converts the sparse OSRM durations from stage 2b into a cuOpt waypoint
 # MAGIC graph, solves the multi-vehicle routing problem on a GPU cluster, and writes the final
 # MAGIC GPU routes to a table with the same core schema used by the Dash app.
+# MAGIC
+# MAGIC Recommended compute: serverless GPU notebook on an A10-backed environment. The
+# MAGIC bundle runs this on the `serverless_gpu` environment (version 4).
 
 # COMMAND ----------
 
-# DBTITLE 1,Install libraries
-# MAGIC %pip install -q folium
-# MAGIC %pip install -q --extra-index-url=https://pypi.nvidia.com cuopt-server-cu12 cuopt-sh-client cuopt-cu12==25.8.*
-# MAGIC %restart_python
+# DBTITLE 1,Install cuOpt for serverless GPU jobs
+# MAGIC %pip install -q --extra-index-url=https://pypi.nvidia.com cuopt-cu12==25.8.0 nvidia-nccl-cu12==2.26.2
 
 # COMMAND ----------
 
@@ -50,6 +51,51 @@ optimized_routes_table = f"{catalog}.{schema}.{optimized_routes_table_name}"
 # COMMAND ----------
 
 # DBTITLE 1,Imports
+import ctypes
+from importlib.metadata import PackageNotFoundError, distribution
+from pathlib import Path
+
+
+def preload_nccl_libraries() -> None:
+    try:
+        nccl_dist = distribution("nvidia-nccl-cu12")
+    except PackageNotFoundError:
+        return
+
+    for relative_path in nccl_dist.files or []:
+        if str(relative_path).endswith("libnccl.so.2"):
+            resolved = Path(nccl_dist.locate_file(relative_path)).resolve()
+            ctypes.CDLL(str(resolved), mode=ctypes.RTLD_GLOBAL)
+
+
+def patch_local_cuda_cluster() -> None:
+    try:
+        import dask_cuda
+        from dask_cuda import local_cuda_cluster
+    except ImportError:
+        return
+
+    original_cluster = local_cuda_cluster.LocalCUDACluster
+
+    class LocalhostTcpCUDACluster(original_cluster):
+        def __init__(self, *args, **kwargs):
+            kwargs["host"] = kwargs.get("host") or "127.0.0.1"
+            kwargs["protocol"] = "tcp"
+            kwargs["enable_tcp_over_ucx"] = False
+            kwargs["enable_nvlink"] = False
+            kwargs["enable_infiniband"] = False
+            kwargs["enable_rdmacm"] = False
+            super().__init__(*args, **kwargs)
+
+    dask_cuda.LocalCUDACluster = LocalhostTcpCUDACluster
+    local_cuda_cluster.LocalCUDACluster = LocalhostTcpCUDACluster
+
+
+# Serverless GPU installs NCCL inside the Python environment rather than on the default
+# loader path, and cuOpt uses LocalCUDACluster internally on single-node runs.
+preload_nccl_libraries()
+patch_local_cuda_cluster()
+
 import cudf
 import numpy as np
 import pandas as pd
@@ -203,7 +249,7 @@ if route_pdf.empty:
     raise ValueError(
         "cuOpt returned no routes for the current GPU optimization inputs "
         f"(status={solution_status}, message={solution_message}). "
-        "Increase num_routes, max_route_seconds, or solver_minutes, then rerun stage 2b."
+        "Increase num_routes, max_route_seconds, or solver_minutes, then rerun stage 2b-3."
     )
 
 # COMMAND ----------

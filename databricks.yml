@@ -17,18 +17,12 @@ variables:
   cpu_spark_version:
     description: DBR for asset prep, geocoding, and CPU routing
     default: 17.3.x-cpu-ml-scala2.13
-  gpu_spark_version:
-    description: DBR for cuOpt-based routing
-    default: 17.3.x-gpu-ml-scala2.13
   cpu_node_type_id:
     description: CPU node type with local disk
     default: m5d.4xlarge
   geocode_node_type_id:
     description: CPU node type used for Photon + OSRM geocoding init
     default: m5d.4xlarge
-  gpu_node_type_id:
-    description: GPU node type for cuOpt
-    default: g5.2xlarge
 
 targets:
   dev:
@@ -127,23 +121,6 @@ targets:
                 spark_conf:
                   spark.databricks.pyspark.dataFrameChunk.enabled: "true"
                   spark.task.resource.gpu.amount: "0"
-
-            - job_cluster_key: gpu_optimize_cluster
-              new_cluster:
-                aws_attributes:
-                  availability: SPOT_WITH_FALLBACK
-                  first_on_demand: 1
-                  zone_id: us-east-2a
-                data_security_mode: SINGLE_USER
-                single_user_name: ${workspace.current_user.userName}
-                spark_version: ${var.gpu_spark_version}
-                node_type_id: ${var.gpu_node_type_id}
-                num_workers: 0
-                spark_conf:
-                  spark.databricks.cluster.profile: singleNode
-                  spark.master: local[*]
-                custom_tags:
-                  ResourceClass: SingleNode
   azure:
     mode: development
     workspace:
@@ -151,7 +128,6 @@ targets:
     variables:
       cpu_node_type_id: Standard_D16ds_v5
       geocode_node_type_id: Standard_D32ds_v5
-      gpu_node_type_id: Standard_NV36ads_A10_v5
     resources:
       jobs:
         routing_end_to_end:
@@ -236,29 +212,75 @@ targets:
                 spark_conf:
                   spark.databricks.pyspark.dataFrameChunk.enabled: "true"
                   spark.task.resource.gpu.amount: "0"
-            - job_cluster_key: gpu_optimize_cluster
-              new_cluster:
-                azure_attributes:
-                  availability: SPOT_WITH_FALLBACK_AZURE
-                  first_on_demand: 1
-                data_security_mode: SINGLE_USER
-                single_user_name: ${workspace.current_user.userName}
-                spark_version: ${var.gpu_spark_version}
-                node_type_id: ${var.gpu_node_type_id}
-                num_workers: 0
-                spark_conf:
-                  spark.databricks.cluster.profile: singleNode
-                  spark.master: local[*]
-                custom_tags:
-                  ResourceClass: SingleNode
 
 resources:
   jobs:
+    routing_intro:
+      name: "[${bundle.target}] Routing Introduction"
+      max_concurrent_runs: 1
+      performance_target: PERFORMANCE_OPTIMIZED
+      environments:
+        - environment_key: intro_cpu
+          spec:
+            environment_version: "5"
+            dependencies:
+              - "ortools==9.14.6206"
+        - environment_key: intro_gpu
+          spec:
+            environment_version: "4"
+
+      tasks:
+        - task_key: intro_cpu
+          environment_key: intro_cpu
+          notebook_task:
+            notebook_path: 0-introduction/01_cpu_intro.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              sample_table: intro_shipments
+              output_table: intro_routes_cpu
+              num_shipments: "50"
+              num_routes: "6"
+
+        - task_key: intro_gpu
+          depends_on:
+            - task_key: intro_cpu
+          environment_key: intro_gpu
+          compute:
+            hardware_accelerator: GPU_1xA10
+          notebook_task:
+            notebook_path: 0-introduction/02_gpu_intro.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              sample_table: intro_shipments
+              output_table: intro_routes_gpu
+              num_shipments: "50"
+              num_routes: "6"
+              solver_minutes: "2"
+
     routing_end_to_end:
       name: "[${bundle.target}] Routing Address-First"
       max_concurrent_runs: 1
+      performance_target: PERFORMANCE_OPTIMIZED
+      environments:
+        - environment_key: serverless_spark
+          spec:
+            environment_version: "5"
+        - environment_key: serverless_gpu
+          spec:
+            environment_version: "4"
 
       tasks:
+        - task_key: 1a_load_normalize_addresses
+          environment_key: serverless_spark
+          notebook_task:
+            notebook_path: 1-preprocessing-geocoding/03_load_and_normalize_addresses.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              row_limit: "50000"
+
         - task_key: 1_prepare_assets
           job_cluster_key: asset_prep_cluster
           notebook_task:
@@ -281,23 +303,32 @@ resources:
               volume: ${var.volume}
               region: ${var.region}
 
-        - task_key: 1_geocode_addresses
+        - task_key: 1b_geocode_addresses
           depends_on:
+            - task_key: 1a_load_normalize_addresses
             - task_key: 1_validate_services
           job_cluster_key: geocode_cluster
           notebook_task:
-            notebook_path: 1-preprocessing-geocoding/03_geocode_addresses.py
+            notebook_path: 1-preprocessing-geocoding/04_geocode_addresses_photon.py
             base_parameters:
               catalog: ${var.catalog}
               schema: ${var.schema}
-              row_limit: "50000"
-
-        - task_key: 2a_cpu_distance
+        - task_key: 1c_build_shipments
           depends_on:
-            - task_key: 1_geocode_addresses
-          job_cluster_key: cpu_distance_cluster
+            - task_key: 1b_geocode_addresses
+          environment_key: serverless_spark
           notebook_task:
-            notebook_path: 2a-cpu-route-optimization/01_distance_calculation.py
+            notebook_path: 1-preprocessing-geocoding/05_build_shipments.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+
+        - task_key: 2a_cluster_shipments
+          depends_on:
+            - task_key: 1c_build_shipments
+          environment_key: serverless_spark
+          notebook_task:
+            notebook_path: 2a-cpu-route-optimization/01_cluster_shipments.py
             base_parameters:
               catalog: ${var.catalog}
               schema: ${var.schema}
@@ -305,12 +336,34 @@ resources:
               num_shipments: "40000"
               num_routes: "320"
 
+        - task_key: 2a_resolve_osrm
+          depends_on:
+            - task_key: 2a_cluster_shipments
+          job_cluster_key: cpu_distance_cluster
+          notebook_task:
+            notebook_path: 2a-cpu-route-optimization/02_resolve_osrm_distances.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              num_shipments: "40000"
+
+        - task_key: 2a_finalize_routing
+          depends_on:
+            - task_key: 2a_resolve_osrm
+          environment_key: serverless_spark
+          notebook_task:
+            notebook_path: 2a-cpu-route-optimization/03_build_routing_table.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              num_shipments: "40000"
+
         - task_key: 2a_cpu_optimize
           depends_on:
-            - task_key: 2a_cpu_distance
+            - task_key: 2a_finalize_routing
           job_cluster_key: cpu_optimize_cluster
           notebook_task:
-            notebook_path: 2a-cpu-route-optimization/02_route_optimization.py
+            notebook_path: 2a-cpu-route-optimization/04_route_optimization.py
             base_parameters:
               catalog: ${var.catalog}
               schema: ${var.schema}
@@ -318,12 +371,12 @@ resources:
               temp_volume: ${var.volume}
               optimized_routes_table: optimized_routes
 
-        - task_key: 2b_gpu_distance
+        - task_key: 2b_prepare_sparse_graph
           depends_on:
-            - task_key: 1_geocode_addresses
-          job_cluster_key: gpu_distance_cluster
+            - task_key: 1c_build_shipments
+          environment_key: serverless_spark
           notebook_task:
-            notebook_path: 2b-gpu-route-optimization/01_distance_calculation.py
+            notebook_path: 2b-gpu-route-optimization/01_prepare_sparse_graph.py
             base_parameters:
               catalog: ${var.catalog}
               schema: ${var.schema}
@@ -331,12 +384,25 @@ resources:
               num_shipments: "10000"
               num_routes: "80"
 
+        - task_key: 2b_resolve_sparse_osrm
+          depends_on:
+            - task_key: 2b_prepare_sparse_graph
+          job_cluster_key: gpu_distance_cluster
+          notebook_task:
+            notebook_path: 2b-gpu-route-optimization/02_resolve_sparse_osrm.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              num_shipments: "10000"
+
         - task_key: 2b_gpu_optimize
           depends_on:
-            - task_key: 2b_gpu_distance
-          job_cluster_key: gpu_optimize_cluster
+            - task_key: 2b_resolve_sparse_osrm
+          environment_key: serverless_gpu
+          compute:
+            hardware_accelerator: GPU_1xA10
           notebook_task:
-            notebook_path: 2b-gpu-route-optimization/02_route_optimization.py
+            notebook_path: 2b-gpu-route-optimization/03_route_optimization.py
             base_parameters:
               catalog: ${var.catalog}
               schema: ${var.schema}

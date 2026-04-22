@@ -2,6 +2,9 @@
 # MAGIC %md
 # MAGIC # Validate Photon and OSRM worker services
 # MAGIC
+# MAGIC Recommended compute: classic single-user cluster with Photon and OSRM init scripts.
+# MAGIC The bundle runs this on `geocode_cluster`.
+# MAGIC
 # MAGIC Run this notebook after:
 # MAGIC
 # MAGIC 1. Executing `01_prepare_assets.py`
@@ -116,5 +119,5 @@ display(
 # DBTITLE 1,Next step
 print(
     "If both services are healthy on the driver and the executor probe succeeds, "
-    "run 03_geocode_addresses.py with the default local Indiana sample."
+    "run 04_geocode_addresses_photon.py with the default local Indiana sample."
 )

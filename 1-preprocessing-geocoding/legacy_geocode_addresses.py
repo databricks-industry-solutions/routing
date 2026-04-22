@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Geocode local addresses into routing-ready shipments
+# MAGIC # Legacy fallback: geocode local addresses into routing-ready shipments
 # MAGIC
 # MAGIC The default path reads the vendored Indianapolis-area Overture sample from
 # MAGIC `../data/overture_indiana_addresses.csv`, geocodes it against executor-local Photon,
@@ -8,6 +8,8 @@
 # MAGIC
 # MAGIC If you already have trusted coordinates, set `coordinates_source_table` and this
 # MAGIC notebook will pass that data through directly.
+# MAGIC
+# MAGIC Recommended compute: classic single-user cluster with Photon and OSRM init scripts.
 
 # COMMAND ----------
 
