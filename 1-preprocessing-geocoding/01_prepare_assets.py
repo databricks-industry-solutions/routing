@@ -69,6 +69,8 @@ force_refresh_photon = dbutils.widgets.get("force_refresh_photon").lower() == "t
 osrm_health_route = dbutils.widgets.get("osrm_health_route")
 debug_start_osrm = dbutils.widgets.get("debug_start_osrm").lower() == "true"
 volume_base = f"/Volumes/{catalog}/{schema}/{volume}"
+photon_db_archive_name = photon_db_url.rsplit("/", 1)[-1]
+photon_db_fast_archive_name = photon_db_archive_name.removesuffix(".tar.bz2") + ".tar"
 
 # COMMAND ----------
 
@@ -114,6 +116,7 @@ export OSRM_VERSION="{osrm_version}"
 export PHOTON_VERSION="{photon_version}"
 export PHOTON_JAR_URL="{photon_jar_url}"
 export PHOTON_DB_URL="{photon_db_url}"
+export PHOTON_DB_ARCHIVE_NAME="{photon_db_archive_name}"
 export PHOTON_PORT="2322"
 export OSRM_PORT="5000"
 export OSRM_THREADS="{osrm_threads}"
@@ -128,6 +131,11 @@ export LOCAL_OSRM_BUILD="/local_disk0/routing-geocoding/osrm-build"
 export LOCAL_OSRM_WORK="/local_disk0/routing-geocoding/osrm-work"
 export LOCAL_PHOTON_ROOT="/local_disk0/routing-geocoding/photon"
 export OSRM_TARGET_DIR="{volume_base}/maps/{region}"
+export OSRM_BUILD_ARCHIVE_PATH="{volume_base}/build/osrm-build.tar"
+export OSRM_MAP_ARCHIVE_PATH="{volume_base}/maps/{region}/osrm-map.tar"
+export PHOTON_DOWNLOAD_DIR="{volume_base}/downloads"
+export PHOTON_DB_ARCHIVE_PATH="{volume_base}/downloads/{photon_db_archive_name}"
+export PHOTON_DB_FAST_ARCHIVE_PATH="{volume_base}/downloads/{photon_db_fast_archive_name}"
 export PHOTON_TARGET_DIR="{volume_base}/photon"
 """
 
@@ -145,8 +153,9 @@ print(env_contents)
 # MAGIC %md
 # MAGIC ## Download Photon assets
 # MAGIC
-# MAGIC The default path keeps the heavyweight geocoder data in the shared volume so later
-# MAGIC worker init scripts can copy it to local disk on each executor.
+# MAGIC The default path keeps the Photon JAR plus the compressed dump in the shared volume
+# MAGIC and extracts that dump on local disk during validation and worker init. That avoids
+# MAGIC recursively copying a huge directory tree into and back out of the volume.
 
 # COMMAND ----------
 
@@ -154,35 +163,29 @@ print(env_contents)
 # MAGIC %sh -e
 # MAGIC source /tmp/routing_geocoding_demo_env.sh
 # MAGIC mkdir -p "$VOLUME_BASE/downloads" "$VOLUME_BASE/photon"
-# MAGIC if [[ "$FORCE_REFRESH_PHOTON" != "true" && -f "$PHOTON_TARGET_DIR/photon-${PHOTON_VERSION}.jar" && -d "$PHOTON_TARGET_DIR/photon_data" ]]; then
+# MAGIC if [[ "$FORCE_REFRESH_PHOTON" != "true" && -f "$PHOTON_TARGET_DIR/photon-${PHOTON_VERSION}.jar" && -f "$PHOTON_DB_ARCHIVE_PATH" ]]; then
 # MAGIC   echo "Photon assets already present in $PHOTON_TARGET_DIR, skipping download."
 # MAGIC   ls -lh "$PHOTON_TARGET_DIR"
+# MAGIC   ls -lh "$PHOTON_DB_ARCHIVE_PATH"
 # MAGIC   exit 0
 # MAGIC fi
 # MAGIC if [[ "$FORCE_REFRESH_PHOTON" == "true" ]]; then
 # MAGIC   echo "Force refreshing Photon assets in $PHOTON_TARGET_DIR"
 # MAGIC fi
-# MAGIC cd "$VOLUME_BASE/downloads"
+# MAGIC LOCAL_PHOTON_DOWNLOAD_DIR="$LOCAL_ASSET_ROOT/downloads"
+# MAGIC rm -rf "$LOCAL_PHOTON_DOWNLOAD_DIR"
+# MAGIC mkdir -p "$LOCAL_PHOTON_DOWNLOAD_DIR"
+# MAGIC cd "$LOCAL_PHOTON_DOWNLOAD_DIR"
 # MAGIC
-# MAGIC PHOTON_DB_ARCHIVE="$(basename "$PHOTON_DB_URL")"
-# MAGIC PHOTON_STAGE="$LOCAL_ASSET_ROOT/photon-stage"
 # MAGIC wget -nv -O "photon-${PHOTON_VERSION}.jar" "$PHOTON_JAR_URL"
-# MAGIC wget -nv -O "$PHOTON_DB_ARCHIVE" "$PHOTON_DB_URL"
-# MAGIC test -s "$PHOTON_DB_ARCHIVE"
-# MAGIC
-# MAGIC rm -rf "$PHOTON_STAGE"
-# MAGIC mkdir -p "$PHOTON_STAGE"
-# MAGIC tar -xjf "$PHOTON_DB_ARCHIVE" -C "$PHOTON_STAGE"
-# MAGIC test -d "$PHOTON_STAGE/photon_data"
-# MAGIC
-# MAGIC rm -rf "$VOLUME_BASE/photon/photon_data"
-# MAGIC mkdir -p "$VOLUME_BASE/photon/photon_data"
-# MAGIC cp -R "$PHOTON_STAGE/photon_data/." "$VOLUME_BASE/photon/photon_data/"
-# MAGIC rm -rf "$PHOTON_STAGE"
+# MAGIC wget -nv -O "$PHOTON_DB_ARCHIVE_NAME" "$PHOTON_DB_URL"
+# MAGIC test -s "$PHOTON_DB_ARCHIVE_NAME"
 # MAGIC cp "photon-${PHOTON_VERSION}.jar" "$VOLUME_BASE/photon/"
+# MAGIC cp "$PHOTON_DB_ARCHIVE_NAME" "$PHOTON_DB_ARCHIVE_PATH"
 # MAGIC printf '%s\n' "$PHOTON_DB_URL" > "$VOLUME_BASE/photon/source_url.txt"
 # MAGIC
 # MAGIC ls -lh "$VOLUME_BASE/photon"
+# MAGIC ls -lh "$PHOTON_DB_ARCHIVE_PATH"
 
 # COMMAND ----------
 
@@ -193,14 +196,17 @@ print(env_contents)
 # MAGIC sudo apt-get install -y --no-install-recommends \
 # MAGIC   openjdk-21-jre-headless \
 # MAGIC   curl \
+# MAGIC   bzip2 \
 # MAGIC   procps
 # MAGIC PHOTON_VALIDATE_ROOT="$LOCAL_ASSET_ROOT/photon-validate"
 # MAGIC PHOTON_VALIDATE_LOG="$LOCAL_ASSET_ROOT/logs/photon-validate.log"
 # MAGIC PHOTON_VALIDATE_PORT="$((PHOTON_PORT + 100))"
 # MAGIC rm -rf "$PHOTON_VALIDATE_ROOT"
-# MAGIC mkdir -p "$PHOTON_VALIDATE_ROOT/photon_data" "$LOCAL_ASSET_ROOT/logs"
+# MAGIC mkdir -p "$PHOTON_VALIDATE_ROOT" "$LOCAL_ASSET_ROOT/logs"
 # MAGIC cp "$PHOTON_TARGET_DIR/photon-${PHOTON_VERSION}.jar" "$PHOTON_VALIDATE_ROOT/"
-# MAGIC cp -R "$PHOTON_TARGET_DIR/photon_data/." "$PHOTON_VALIDATE_ROOT/photon_data/"
+# MAGIC test -s "$PHOTON_DB_ARCHIVE_PATH"
+# MAGIC tar -xjf "$PHOTON_DB_ARCHIVE_PATH" -C "$PHOTON_VALIDATE_ROOT"
+# MAGIC test -d "$PHOTON_VALIDATE_ROOT/photon_data"
 # MAGIC cd "$PHOTON_VALIDATE_ROOT"
 # MAGIC nohup java -Xmx"$PHOTON_HEAP" -jar "photon-${PHOTON_VERSION}.jar" \
 # MAGIC   -data-dir "$PHOTON_VALIDATE_ROOT" \
@@ -228,6 +234,25 @@ print(env_contents)
 # MAGIC echo "Photon validation failed for query ${PHOTON_HEALTH_QUERY}" >&2
 # MAGIC cat "$PHOTON_VALIDATE_LOG" || true
 # MAGIC exit 1
+
+# COMMAND ----------
+
+# DBTITLE 1,Archive Photon dump for faster worker init
+# MAGIC %sh -e
+# MAGIC source /tmp/routing_geocoding_demo_env.sh
+# MAGIC PHOTON_VALIDATE_ROOT="$LOCAL_ASSET_ROOT/photon-validate"
+# MAGIC LOCAL_PHOTON_ARCHIVE_DIR="$LOCAL_ASSET_ROOT/photon-archives"
+# MAGIC if [[ -f "$PHOTON_DB_FAST_ARCHIVE_PATH" ]]; then
+# MAGIC   echo "Photon fast archive already present, skipping archive step."
+# MAGIC   ls -lh "$PHOTON_DB_FAST_ARCHIVE_PATH"
+# MAGIC   exit 0
+# MAGIC fi
+# MAGIC test -d "$PHOTON_VALIDATE_ROOT/photon_data"
+# MAGIC rm -rf "$LOCAL_PHOTON_ARCHIVE_DIR"
+# MAGIC mkdir -p "$LOCAL_PHOTON_ARCHIVE_DIR"
+# MAGIC tar -cf "$LOCAL_PHOTON_ARCHIVE_DIR/photon-db-fast.tar" -C "$PHOTON_VALIDATE_ROOT" photon_data
+# MAGIC cp "$LOCAL_PHOTON_ARCHIVE_DIR/photon-db-fast.tar" "$PHOTON_DB_FAST_ARCHIVE_PATH"
+# MAGIC ls -lh "$PHOTON_DB_FAST_ARCHIVE_PATH"
 
 # COMMAND ----------
 
@@ -318,6 +343,29 @@ print(env_contents)
 # MAGIC cp -RL map.osrm* "$OSRM_TARGET_DIR/"
 # MAGIC test -f "$OSRM_TARGET_DIR/map.osrm.partition"
 # MAGIC ls -lh "$OSRM_TARGET_DIR"
+
+# COMMAND ----------
+
+# DBTITLE 1,Archive OSRM artifacts for worker init
+# MAGIC %sh -e
+# MAGIC source /tmp/routing_geocoding_demo_env.sh
+# MAGIC if [[ -f "$OSRM_BUILD_ARCHIVE_PATH" && -f "$OSRM_MAP_ARCHIVE_PATH" ]]; then
+# MAGIC   echo "OSRM archives already present, skipping archive step."
+# MAGIC   ls -lh "$OSRM_BUILD_ARCHIVE_PATH" "$OSRM_MAP_ARCHIVE_PATH"
+# MAGIC   exit 0
+# MAGIC fi
+# MAGIC
+# MAGIC LOCAL_OSRM_ARCHIVE_DIR="$LOCAL_ASSET_ROOT/osrm-archives"
+# MAGIC mkdir -p "$LOCAL_OSRM_ARCHIVE_DIR"
+# MAGIC test -x "$VOLUME_BASE/build/osrm/osrm-routed"
+# MAGIC test -f "$VOLUME_BASE/build/osrm/profiles/car.lua"
+# MAGIC test -f "$OSRM_TARGET_DIR/map.osrm.partition"
+# MAGIC rm -f "$LOCAL_OSRM_ARCHIVE_DIR/osrm-build.tar" "$LOCAL_OSRM_ARCHIVE_DIR/osrm-map.tar"
+# MAGIC tar -cf "$LOCAL_OSRM_ARCHIVE_DIR/osrm-build.tar" -C "$VOLUME_BASE/build/osrm" .
+# MAGIC tar -cf "$LOCAL_OSRM_ARCHIVE_DIR/osrm-map.tar" -C "$OSRM_TARGET_DIR" .
+# MAGIC cp "$LOCAL_OSRM_ARCHIVE_DIR/osrm-build.tar" "$OSRM_BUILD_ARCHIVE_PATH"
+# MAGIC cp "$LOCAL_OSRM_ARCHIVE_DIR/osrm-map.tar" "$OSRM_MAP_ARCHIVE_PATH"
+# MAGIC ls -lh "$OSRM_BUILD_ARCHIVE_PATH" "$OSRM_MAP_ARCHIVE_PATH"
 
 # COMMAND ----------
 

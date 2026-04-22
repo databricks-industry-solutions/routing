@@ -23,6 +23,9 @@ variables:
   cpu_node_type_id:
     description: CPU node type with local disk
     default: m5d.4xlarge
+  geocode_node_type_id:
+    description: CPU node type used for Photon + OSRM geocoding init
+    default: m5d.4xlarge
   gpu_node_type_id:
     description: GPU node type for cuOpt
     default: g5.2xlarge
@@ -33,118 +36,227 @@ targets:
     mode: development
     workspace:
       profile: DEFAULT
+    resources:
+      jobs:
+        routing_end_to_end:
+          job_clusters:
+            - job_cluster_key: asset_prep_cluster
+              new_cluster:
+                aws_attributes:
+                  availability: SPOT_WITH_FALLBACK
+                  first_on_demand: 1
+                  zone_id: us-east-2a
+                data_security_mode: SINGLE_USER
+                single_user_name: ${workspace.current_user.userName}
+                spark_version: ${var.cpu_spark_version}
+                node_type_id: ${var.cpu_node_type_id}
+                num_workers: 0
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: local[*]
+                custom_tags:
+                  ResourceClass: SingleNode
+
+            - job_cluster_key: geocode_cluster
+              new_cluster:
+                aws_attributes:
+                  availability: SPOT_WITH_FALLBACK
+                  first_on_demand: 1
+                  zone_id: us-east-2a
+                data_security_mode: SINGLE_USER
+                single_user_name: ${workspace.current_user.userName}
+                spark_version: ${var.cpu_spark_version}
+                node_type_id: ${var.geocode_node_type_id}
+                num_workers: 2
+                spark_conf:
+                  spark.databricks.pyspark.dataFrameChunk.enabled: "true"
+                  spark.task.resource.gpu.amount: "0"
+                init_scripts:
+                  - volumes:
+                      destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/photon-worker.sh
+                  - volumes:
+                      destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/osrm-worker.sh
+
+            - job_cluster_key: cpu_distance_cluster
+              new_cluster:
+                aws_attributes:
+                  availability: SPOT_WITH_FALLBACK
+                  first_on_demand: 1
+                  zone_id: us-east-2a
+                data_security_mode: SINGLE_USER
+                single_user_name: ${workspace.current_user.userName}
+                spark_version: ${var.cpu_spark_version}
+                node_type_id: ${var.cpu_node_type_id}
+                num_workers: 4
+                spark_conf:
+                  spark.databricks.pyspark.dataFrameChunk.enabled: "true"
+                  spark.task.resource.gpu.amount: "0"
+                init_scripts:
+                  - volumes:
+                      destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/osrm-worker.sh
+
+            - job_cluster_key: gpu_distance_cluster
+              new_cluster:
+                aws_attributes:
+                  availability: SPOT_WITH_FALLBACK
+                  first_on_demand: 1
+                  zone_id: us-east-2a
+                data_security_mode: SINGLE_USER
+                single_user_name: ${workspace.current_user.userName}
+                spark_version: ${var.cpu_spark_version}
+                node_type_id: ${var.cpu_node_type_id}
+                num_workers: 2
+                spark_conf:
+                  spark.databricks.pyspark.dataFrameChunk.enabled: "true"
+                  spark.task.resource.gpu.amount: "0"
+                init_scripts:
+                  - volumes:
+                      destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/osrm-worker.sh
+
+            - job_cluster_key: cpu_optimize_cluster
+              new_cluster:
+                aws_attributes:
+                  availability: SPOT_WITH_FALLBACK
+                  first_on_demand: 1
+                  zone_id: us-east-2a
+                data_security_mode: SINGLE_USER
+                single_user_name: ${workspace.current_user.userName}
+                spark_version: ${var.cpu_spark_version}
+                node_type_id: ${var.cpu_node_type_id}
+                num_workers: 4
+                spark_conf:
+                  spark.databricks.pyspark.dataFrameChunk.enabled: "true"
+                  spark.task.resource.gpu.amount: "0"
+
+            - job_cluster_key: gpu_optimize_cluster
+              new_cluster:
+                aws_attributes:
+                  availability: SPOT_WITH_FALLBACK
+                  first_on_demand: 1
+                  zone_id: us-east-2a
+                data_security_mode: SINGLE_USER
+                single_user_name: ${workspace.current_user.userName}
+                spark_version: ${var.gpu_spark_version}
+                node_type_id: ${var.gpu_node_type_id}
+                num_workers: 0
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: local[*]
+                custom_tags:
+                  ResourceClass: SingleNode
+  azure:
+    mode: development
+    workspace:
+      profile: adb-984752964297111
+    variables:
+      cpu_node_type_id: Standard_D16ds_v5
+      geocode_node_type_id: Standard_D32ds_v5
+      gpu_node_type_id: Standard_NV36ads_A10_v5
+    resources:
+      jobs:
+        routing_end_to_end:
+          job_clusters:
+            - job_cluster_key: asset_prep_cluster
+              new_cluster:
+                azure_attributes:
+                  availability: SPOT_WITH_FALLBACK_AZURE
+                  first_on_demand: 1
+                data_security_mode: SINGLE_USER
+                single_user_name: ${workspace.current_user.userName}
+                spark_version: ${var.cpu_spark_version}
+                node_type_id: ${var.cpu_node_type_id}
+                num_workers: 0
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: local[*]
+                custom_tags:
+                  ResourceClass: SingleNode
+            - job_cluster_key: geocode_cluster
+              new_cluster:
+                azure_attributes:
+                  availability: SPOT_WITH_FALLBACK_AZURE
+                  first_on_demand: 1
+                data_security_mode: SINGLE_USER
+                single_user_name: ${workspace.current_user.userName}
+                spark_version: ${var.cpu_spark_version}
+                node_type_id: ${var.geocode_node_type_id}
+                num_workers: 0
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: local[*]
+                custom_tags:
+                  ResourceClass: SingleNode
+                init_scripts:
+                  - volumes:
+                      destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/photon-worker.sh
+                  - volumes:
+                      destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/osrm-worker.sh
+            - job_cluster_key: cpu_distance_cluster
+              new_cluster:
+                azure_attributes:
+                  availability: SPOT_WITH_FALLBACK_AZURE
+                  first_on_demand: 1
+                data_security_mode: SINGLE_USER
+                single_user_name: ${workspace.current_user.userName}
+                spark_version: ${var.cpu_spark_version}
+                node_type_id: ${var.cpu_node_type_id}
+                num_workers: 4
+                spark_conf:
+                  spark.databricks.pyspark.dataFrameChunk.enabled: "true"
+                  spark.task.resource.gpu.amount: "0"
+                init_scripts:
+                  - volumes:
+                      destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/osrm-worker.sh
+            - job_cluster_key: gpu_distance_cluster
+              new_cluster:
+                azure_attributes:
+                  availability: SPOT_WITH_FALLBACK_AZURE
+                  first_on_demand: 1
+                data_security_mode: SINGLE_USER
+                single_user_name: ${workspace.current_user.userName}
+                spark_version: ${var.cpu_spark_version}
+                node_type_id: ${var.cpu_node_type_id}
+                num_workers: 2
+                spark_conf:
+                  spark.databricks.pyspark.dataFrameChunk.enabled: "true"
+                  spark.task.resource.gpu.amount: "0"
+                init_scripts:
+                  - volumes:
+                      destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/osrm-worker.sh
+            - job_cluster_key: cpu_optimize_cluster
+              new_cluster:
+                azure_attributes:
+                  availability: SPOT_WITH_FALLBACK_AZURE
+                  first_on_demand: 1
+                data_security_mode: SINGLE_USER
+                single_user_name: ${workspace.current_user.userName}
+                spark_version: ${var.cpu_spark_version}
+                node_type_id: ${var.cpu_node_type_id}
+                num_workers: 4
+                spark_conf:
+                  spark.databricks.pyspark.dataFrameChunk.enabled: "true"
+                  spark.task.resource.gpu.amount: "0"
+            - job_cluster_key: gpu_optimize_cluster
+              new_cluster:
+                azure_attributes:
+                  availability: SPOT_WITH_FALLBACK_AZURE
+                  first_on_demand: 1
+                data_security_mode: SINGLE_USER
+                single_user_name: ${workspace.current_user.userName}
+                spark_version: ${var.gpu_spark_version}
+                node_type_id: ${var.gpu_node_type_id}
+                num_workers: 0
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: local[*]
+                custom_tags:
+                  ResourceClass: SingleNode
 
 resources:
   jobs:
     routing_end_to_end:
       name: "[${bundle.target}] Routing Address-First"
       max_concurrent_runs: 1
-
-      job_clusters:
-        - job_cluster_key: asset_prep_cluster
-          new_cluster:
-            aws_attributes:
-              availability: SPOT_WITH_FALLBACK
-              first_on_demand: 1
-              zone_id: us-east-2a
-            data_security_mode: SINGLE_USER
-            single_user_name: ${workspace.current_user.userName}
-            spark_version: ${var.cpu_spark_version}
-            node_type_id: ${var.cpu_node_type_id}
-            num_workers: 0
-            spark_conf:
-              spark.databricks.cluster.profile: singleNode
-              spark.master: local[*]
-            custom_tags:
-              ResourceClass: SingleNode
-
-        - job_cluster_key: geocode_cluster
-          new_cluster:
-            aws_attributes:
-              availability: SPOT_WITH_FALLBACK
-              first_on_demand: 1
-              zone_id: us-east-2a
-            data_security_mode: SINGLE_USER
-            single_user_name: ${workspace.current_user.userName}
-            spark_version: ${var.cpu_spark_version}
-            node_type_id: ${var.cpu_node_type_id}
-            num_workers: 2
-            spark_conf:
-              spark.databricks.pyspark.dataFrameChunk.enabled: "true"
-              spark.task.resource.gpu.amount: "0"
-            init_scripts:
-              - volumes:
-                  destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/photon-worker.sh
-              - volumes:
-                  destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/osrm-worker.sh
-
-        - job_cluster_key: cpu_distance_cluster
-          new_cluster:
-            aws_attributes:
-              availability: SPOT_WITH_FALLBACK
-              first_on_demand: 1
-              zone_id: us-east-2a
-            data_security_mode: SINGLE_USER
-            single_user_name: ${workspace.current_user.userName}
-            spark_version: ${var.cpu_spark_version}
-            node_type_id: ${var.cpu_node_type_id}
-            num_workers: 4
-            spark_conf:
-              spark.databricks.pyspark.dataFrameChunk.enabled: "true"
-              spark.task.resource.gpu.amount: "0"
-            init_scripts:
-              - volumes:
-                  destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/osrm-worker.sh
-
-        - job_cluster_key: gpu_distance_cluster
-          new_cluster:
-            aws_attributes:
-              availability: SPOT_WITH_FALLBACK
-              first_on_demand: 1
-              zone_id: us-east-2a
-            data_security_mode: SINGLE_USER
-            single_user_name: ${workspace.current_user.userName}
-            spark_version: ${var.cpu_spark_version}
-            node_type_id: ${var.cpu_node_type_id}
-            num_workers: 2
-            spark_conf:
-              spark.databricks.pyspark.dataFrameChunk.enabled: "true"
-              spark.task.resource.gpu.amount: "0"
-            init_scripts:
-              - volumes:
-                  destination: /Volumes/${var.catalog}/${var.schema}/${var.volume}/init/osrm-worker.sh
-
-        - job_cluster_key: cpu_optimize_cluster
-          new_cluster:
-            aws_attributes:
-              availability: SPOT_WITH_FALLBACK
-              first_on_demand: 1
-              zone_id: us-east-2a
-            data_security_mode: SINGLE_USER
-            single_user_name: ${workspace.current_user.userName}
-            spark_version: ${var.cpu_spark_version}
-            node_type_id: ${var.cpu_node_type_id}
-            num_workers: 4
-            spark_conf:
-              spark.databricks.pyspark.dataFrameChunk.enabled: "true"
-              spark.task.resource.gpu.amount: "0"
-
-        - job_cluster_key: gpu_optimize_cluster
-          new_cluster:
-            aws_attributes:
-              availability: SPOT_WITH_FALLBACK
-              first_on_demand: 1
-              zone_id: us-east-2a
-            data_security_mode: SINGLE_USER
-            single_user_name: ${workspace.current_user.userName}
-            spark_version: ${var.gpu_spark_version}
-            node_type_id: ${var.gpu_node_type_id}
-            num_workers: 0
-            spark_conf:
-              spark.databricks.cluster.profile: singleNode
-              spark.master: local[*]
-            custom_tags:
-              ResourceClass: SingleNode
 
       tasks:
         - task_key: 1_prepare_assets
