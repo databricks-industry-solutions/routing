@@ -7,6 +7,16 @@ The default sample is vendored into the repo, so the input data path works witho
 runtime download from Overture. The only heavyweight setup-time downloads are the Photon
 index and the Indiana OSRM graph assets.
 
+## Tested targets
+
+- AWS `dev` target via the `DEFAULT` Databricks CLI profile.
+- Azure `azure` target via `adb-984752964297111`
+  (`https://adb-984752964297111.11.azuredatabricks.net`).
+- Azure node defaults validated in this repo:
+  - asset prep / CPU distance / CPU optimize: `Standard_D16ds_v5`
+  - geocode + service validation: `Standard_D32ds_v5`
+  - GPU optimize: `Standard_NV36ads_A10_v5`
+
 ## Repo map
 
 - `1-preprocessing-geocoding/`
@@ -25,12 +35,12 @@ index and the Indiana OSRM graph assets.
 - `routing_app/`
   Dash app for browsing the final route table.
 - `databricks.yml`
-  Easy-button Asset Bundle that deploys and runs the end-to-end workflow in the
-  `DEFAULT` Databricks CLI profile.
+  Easy-button Asset Bundle with both the default AWS target and the Azure-validated
+  `azure` target.
 
 ## Easy button
 
-The default environment is:
+The default AWS-oriented environment is:
 
 - Databricks CLI profile: `DEFAULT`
 - Catalog: `demos`
@@ -38,12 +48,22 @@ The default environment is:
 - Volume: `routing_assets`
 - Region: `indiana`
 
-Deploy and run the full workflow:
+Deploy and run the full workflow on AWS / the default target:
 
 ```bash
-databricks bundle deploy -p DEFAULT
-databricks bundle run routing_end_to_end -p DEFAULT
+databricks bundle deploy
+databricks bundle run routing_end_to_end
 ```
+
+Deploy and run the Azure-validated target:
+
+```bash
+databricks bundle deploy -t azure
+databricks bundle run routing_end_to_end -t azure
+```
+
+The `azure` target already pins `targets.azure.workspace.profile`, so do not override it
+with `--profile DEFAULT`.
 
 The workflow order is:
 
@@ -56,6 +76,13 @@ The workflow order is:
 7. `2b_gpu_optimize`
 
 CPU and GPU optimization run as separate branches after geocoding.
+
+If the configured catalog does not exist, `1-preprocessing-geocoding/01_prepare_assets.py`
+fails immediately with:
+
+```text
+Catalog `<catalog>` must already exist before running this notebook.
+```
 
 ## Development loop
 
@@ -70,6 +97,22 @@ clusters and rerun:
 ```bash
 databricks bundle run routing_end_to_end -p DEFAULT
 ```
+
+## Observed runtimes
+
+Successful Azure validation on `adb-984752964297111` produced these approximate
+successful-task timings:
+
+- `1_prepare_assets`: ~49 min cold path
+- `1_validate_services`: ~6 min
+- `1_geocode_addresses`: ~9 min
+- `2a_cpu_distance`: ~16 min
+- `2a_cpu_optimize`: ~15 min
+- `2b_gpu_distance`: ~9 min
+- `2b_gpu_optimize`: ~30 min
+
+Because CPU and GPU branches run in parallel after geocoding, the observed cold-start
+wall clock is roughly `100-105` minutes once the workflow is green.
 
 ## Manual notebook order
 
@@ -133,10 +176,10 @@ Change these places first:
 - Different input data:
   `1-preprocessing-geocoding/03_geocode_addresses.py` or `data/refresh_overture_indiana_addresses.py`.
 - Different cluster shapes:
-  `databricks.yml` variables `cpu_node_type_id`, `gpu_node_type_id`,
-  `cpu_spark_version`, and `gpu_spark_version`.
+  `databricks.yml` variables `cpu_node_type_id`, `geocode_node_type_id`,
+  `gpu_node_type_id`, `cpu_spark_version`, and `gpu_spark_version`.
 - Different app defaults:
-  `routing_app/config.py` and `routing_app/app.yaml`.
+  `routing_app/config.py`, `routing_app/app.yaml`, and `routing_app/README.md`.
 
 ## Data provenance
 

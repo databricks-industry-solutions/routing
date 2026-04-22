@@ -50,12 +50,29 @@ Do not silently change these contracts. If you must change them, update:
 
 - Databricks CLI profile:
   `DEFAULT`
+- Azure target profile:
+  `adb-984752964297111`
 - Catalog / schema:
   `demos.routing`
 - Shared managed volume:
   `demos.routing.routing_assets`
 - Region:
   `indiana`
+
+## How to retarget the bundle
+
+When moving this accelerator to a new cloud or workspace, update these two areas together
+in `databricks.yml`:
+
+- `targets.<target>.variables`
+  for node types such as `cpu_node_type_id`, `geocode_node_type_id`, and
+  `gpu_node_type_id`
+- `targets.<target>.resources.jobs.routing_end_to_end.job_clusters`
+  for cloud-specific fields like `aws_attributes` vs `azure_attributes`, single-node
+  settings, and any cluster-level init-script shape changes
+
+After changing them, validate with `databricks bundle validate -t <target>` and rerun
+stage 1 before touching CPU or GPU logic.
 
 ## Common adaptation points
 
@@ -69,7 +86,8 @@ Do not silently change these contracts. If you must change them, update:
   `1-preprocessing-geocoding/03_geocode_addresses.py`, or point the stage 2 notebooks at
   a shipments table directly
 - New cloud / cluster shapes:
-  adjust `cpu_node_type_id`, `gpu_node_type_id`, and runtime variables in `databricks.yml`
+  adjust `targets.*.variables` plus
+  `targets.*.resources.jobs.routing_end_to_end.job_clusters` in `databricks.yml`
 
 ## Important implementation notes
 
