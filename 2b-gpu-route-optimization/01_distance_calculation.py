@@ -329,11 +329,13 @@ knn_lists = (
     topk.unionByName(depot_dist)
     .groupBy("origin_id", "global_idx_source")
     .agg(
-        F.collect_list(
-            F.struct(
-                F.col("dest_id"),
-                F.col("geo_dist"),
-                F.col("global_idx_dest"),
+        F.sort_array(
+            F.collect_list(
+                F.struct(
+                    F.col("geo_dist").alias("geo_dist"),
+                    F.col("dest_id").alias("dest_id"),
+                    F.col("global_idx_dest").alias("global_idx_dest"),
+                )
             )
         ).alias("neighbors")
     )

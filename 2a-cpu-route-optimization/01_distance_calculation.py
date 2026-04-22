@@ -240,6 +240,7 @@ display(
 
 # DBTITLE 1,Resolve driving times with OSRM
 def get_driving_times(pdf: pd.DataFrame) -> pd.DataFrame:
+    pdf = pdf.sort_values(["package_id"], kind="mergesort").reset_index(drop=True)
     coords = [(DEPOT_LON, DEPOT_LAT)] + list(
         zip(pdf["longitude"].tolist(), pdf["latitude"].tolist())
     )
