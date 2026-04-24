@@ -1,102 +1,129 @@
 # Route Optimization Dashboard
 
-A Dash web application that displays optimized delivery routes retrieved from a Databricks SQL warehouse using the Databricks Python SDK. The app provides interactive route visualization with detailed statistics for route optimization analysis.
+This Dash app reads the final route table from Databricks SQL and renders each route as an
+interactive map.
 
-## Features
+## Default table
 
-- **Route Selection**: Dropdown to select from available routes with truck type information
-- **Interactive Map**: Uses Folium to display route visualization with:
-  - Color-coded stops showing visit order
-  - Connecting lines between stops
-  - Popup information for each stop
-- **Route Statistics**: Shows comprehensive route details including:
-  - Route ID and truck type
-  - Total number of stops
-  - Package IDs for all deliveries
-- **Databricks Integration**: Seamlessly queries route data from your Databricks SQL warehouse
+The app now defaults to a CPU/GPU switcher backed by:
+
+```bash
+export CPU_ROUTES_TABLE="demos.routing.optimized_routes"
+export GPU_ROUTES_TABLE="demos.routing.optimized_routes_gpu_10000"
+export DEFAULT_ROUTE_SOURCE="cpu"
+```
+
+For backward compatibility, `ROUTES_TABLE` still acts as the CPU table default.
+
+There is intentionally no repo-wide default for `DATABRICKS_WAREHOUSE_ID`. Pick the SQL
+warehouse that exists in the workspace where you run the app.
 
 ## Setup
 
-### 1. Install Dependencies
+1. Install the app dependencies:
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure Databricks Authentication
-
-This application uses the Databricks CLI for authentication. Set up your credentials:
+2. Authenticate to Databricks with the profile you want the app to use:
 
 ```bash
-# Install Databricks CLI if not already installed
-pip install databricks-cli
-
-# Login to your Databricks workspace
-databricks auth login
+databricks auth login --profile <your-profile>
+export DATABRICKS_CONFIG_PROFILE="<your-profile>"
 ```
 
-The app will use your default profile for authentication.
-
-### 3. Configure Environment Variables
-
-Set the following environment variables, or modify the values directly in `config.py`:
+3. Set the SQL warehouse and optional route tables:
 
 ```bash
 export DATABRICKS_WAREHOUSE_ID="your-warehouse-id"
-export ROUTES_TABLE="your_catalog.your_schema.your_routes_table"
+export CPU_ROUTES_TABLE="demos.routing.optimized_routes"
+export GPU_ROUTES_TABLE="demos.routing.optimized_routes_gpu_10000"
 ```
 
-### 4. Expected Table Schema
+4. Start the app:
 
-Your routes table should have the following columns:
-
-- `cluster_id`: Identifier for each route (STRING)
-- `truck_type`: Type of truck used for the route (STRING)
-- `route_index`: Order of stops within a route (INT)
-- `package_id`: Identifier for each package/stop (STRING)
-- `latitude`: Decimal latitude coordinates (DOUBLE)
-- `longitude`: Decimal longitude coordinates (DOUBLE)
-
-## Usage
-
-1. Run the application:
 ```bash
 python app.py
 ```
 
-2. Open your browser and navigate to `http://localhost:8050`
+Then open `http://localhost:8050`.
 
-3. Select a route from the dropdown to view its visualization and statistics
+## Smoke-test recipe
 
-## How It Works
+One Azure smoke-test recipe is:
 
-1. **Connection**: The app connects to your Databricks SQL warehouse using the Databricks Python SDK with CLI authentication
-2. **Route Loading**: It queries for distinct routes (cluster_id and truck_type) to populate the dropdown
-3. **Route Visualization**: When a route is selected, it retrieves all stops for that route ordered by route_index
-4. **Map Generation**: The `plot_route_folium` function creates an interactive Folium map with:
-   - Markers for each stop colored by visit order
-   - Lines connecting consecutive stops
-   - Popup information showing package details
-5. **Statistics**: Real-time statistics are displayed showing route details and package information
+```bash
+export DATABRICKS_CONFIG_PROFILE="<your-azure-profile>"
+export DATABRICKS_WAREHOUSE_ID="<workspace-warehouse-id>"
+```
 
-## Files
+CPU output:
 
-- `app.py`: Main Dash application with callbacks for route selection and visualization
-- `config.py`: Configuration settings for Databricks connection and table schema
-- `plotting.py`: Contains the route visualization function using Folium
-- `requirements.txt`: Python dependencies
+```bash
+export DEFAULT_ROUTE_SOURCE="cpu"
+python app.py
+```
 
-## Dependencies
+GPU output:
 
-- `folium==0.20.0`: Interactive map visualization
-- `dash==2.14.1`: Web application framework
-- `pandas==2.1.4`: Data manipulation and analysis
-- `databricks-sdk==0.20.0`: Databricks Python SDK for warehouse connections
-- `branca==0.6.0`: Folium dependency for map styling
+```bash
+export DEFAULT_ROUTE_SOURCE="gpu"
+python app.py
+```
 
-## Troubleshooting
+For a quick smoke test, confirm that:
 
-- **Authentication Issues**: Make sure you've run `databricks auth login` and have valid credentials
-- **Connection Problems**: Verify your warehouse ID is correct and the warehouse is running
-- **Data Issues**: Ensure your routes table exists and has the expected schema
-- **Map Not Loading**: Check that your latitude/longitude data is valid and within expected ranges 
+- the page loads without a traceback
+- the CPU/GPU switch updates the route list
+- the route dropdown populates
+- the default route shows stats
+- the Plotly map renders route points on the basemap
+
+## Expected schema
+
+The route table should expose:
+
+- `cluster_id`
+- `truck_type`
+- `route_index`
+- `package_id`
+- `latitude`
+- `longitude`
+
+## Notes
+
+- The accelerator's CPU path writes `demos.routing.optimized_routes` by default.
+- The GPU path writes `demos.routing.optimized_routes_gpu_10000` by default.
+- The app uses a built-in CPU/GPU switcher; set `CPU_ROUTES_TABLE`, `GPU_ROUTES_TABLE`, and
+  `DEFAULT_ROUTE_SOURCE` if you want different defaults.
+- If `DATABRICKS_WAREHOUSE_ID` is unset, startup fails fast with:
+  `Set DATABRICKS_WAREHOUSE_ID to a Databricks SQL warehouse ID before starting the app`
+- If you deploy this as a Databricks App, replace `REPLACE_ME` in `app.yaml` or inject
+  `DATABRICKS_WAREHOUSE_ID` during deployment.
+- The app relies on Databricks SQL connectivity; it is not part of the bundle workflow.
+
+## Licenses
+
+© 2026 Databricks, Inc. All rights reserved. The source in this accelerator is provided
+subject to the Databricks License. All included or referenced third party libraries are
+subject to the licenses set forth below.
+
+| library | description | license | source |
+| --- | --- | --- | --- |
+| OSRM Backend Server | High performance routing engine written in C++ designed to run on OpenStreetMap data | BSD 2-Clause "Simplified" License | https://github.com/Project-OSRM/osrm-backend |
+| Photon | Open-source geocoder for OpenStreetMap data used by the address-to-coordinate stage | Apache License 2.0 | https://github.com/komoot/photon |
+| ortools | Operations research tools developed at Google for combinatorial optimization | Apache License 2.0 | https://github.com/google/or-tools |
+| folium | Visualize data in Python on interactive Leaflet.js maps | MIT License | https://github.com/python-visualization/folium |
+| dash | Python framework for building analytical web applications and dashboards | MIT License | https://github.com/plotly/dash |
+| branca | Library for generating complex HTML and JavaScript pages in Python; provides shared helpers for folium | MIT License | https://github.com/python-visualization/branca |
+| plotly | Open-source Python library for interactive charts and graphs | MIT License | https://github.com/plotly/plotly.py |
+| ray | Flexible distributed execution framework for scaling Python workflows | Apache License 2.0 | https://github.com/ray-project/ray |
+| Databricks SDK for Python | Python SDK for Databricks workspace APIs used by the dashboard and setup helper | Apache License 2.0 | https://github.com/databricks/databricks-sdk-py |
+| DuckDB | In-process analytical database used to refresh the vendored Overture sample | MIT License | https://github.com/duckdb/duckdb |
+| cuOpt | GPU-accelerated combinatorial optimization solver from NVIDIA | Apache License 2.0 | https://docs.nvidia.com/cuopt/user-guide/latest/license.html |
+
+The vendored address sample derives from Overture open address data. See `../data/README.md`
+for source release details and attribution notes.

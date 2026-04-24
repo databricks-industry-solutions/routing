@@ -3,6 +3,7 @@ from dash import dcc, html, Input, Output, State, callback
 import pandas as pd
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
+from flask import Response
 import json
 import os
 from plotting import plot_route_plotly, get_reorder_instructions
@@ -15,6 +16,11 @@ from ortools.constraint_solver import pywrapcp
 # Initialize Dash app
 app = dash.Dash(__name__)
 
+
+@app.server.route("/favicon.ico")
+def favicon():
+    return Response(status=204)
+
 # Initialize Databricks client
 try:
     w = WorkspaceClient()
@@ -23,6 +29,40 @@ except Exception as e:
     print(f"❌ Failed to connect to Databricks: {e}")
     print("Make sure you've run 'databricks auth login' and have valid credentials")
     exit(1)
+
+if not config.DATABRICKS_WAREHOUSE_ID or config.DATABRICKS_WAREHOUSE_ID == "REPLACE_ME":
+    print(
+        "❌ Set DATABRICKS_WAREHOUSE_ID to a Databricks SQL warehouse ID before starting the app"
+    )
+    exit(1)
+
+
+ROUTE_SOURCE_LABELS = {
+    "cpu": "CPU",
+    "gpu": "GPU",
+}
+ROUTE_SOURCE_TABLES = {
+    "cpu": config.CPU_ROUTES_TABLE,
+    "gpu": config.GPU_ROUTES_TABLE,
+}
+DEFAULT_ROUTE_SOURCE = (
+    config.DEFAULT_ROUTE_SOURCE
+    if config.DEFAULT_ROUTE_SOURCE in ROUTE_SOURCE_TABLES
+    else "cpu"
+)
+
+
+def normalize_route_source(route_source):
+    return route_source if route_source in ROUTE_SOURCE_TABLES else DEFAULT_ROUTE_SOURCE
+
+
+def get_routes_table(route_source):
+    return ROUTE_SOURCE_TABLES[normalize_route_source(route_source)]
+
+
+def get_route_source_label(route_source):
+    normalized = normalize_route_source(route_source)
+    return ROUTE_SOURCE_LABELS.get(normalized, normalized.upper())
 
 # App layout
 app.layout = html.Div([
@@ -35,7 +75,21 @@ app.layout = html.Div([
         # Left column - Controls
         html.Div([
             html.H1("Route Optimization Dashboard", style={'textAlign': 'center', 'marginBottom': '30px', 'fontSize': '18px'}),
-            
+
+            html.Div([
+                html.Label("Route Source:", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+                dcc.RadioItems(
+                    id='route-source-toggle',
+                    options=[
+                        {'label': 'CPU', 'value': 'cpu'},
+                        {'label': 'GPU', 'value': 'gpu'},
+                    ],
+                    value=DEFAULT_ROUTE_SOURCE,
+                    labelStyle={'display': 'inline-block', 'marginRight': '12px'},
+                    style={'marginBottom': '20px'}
+                ),
+            ]),
+
             html.Div([
                 html.Label("Select Route:", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
                 dcc.Dropdown(
@@ -225,13 +279,14 @@ def solve_tsp_with_ortools(coordinates, start_index=0):
 @callback(
     [Output('route-dropdown', 'options'),
      Output('route-dropdown', 'value')],
-    Input('route-dropdown', 'id')
+    Input('route-source-toggle', 'value')
 )
-def update_route_dropdown_callback(dropdown_id):
+def update_route_dropdown_callback(route_source):
     """Populate dropdown with distinct routes from the table and set default value"""
+    routes_table = get_routes_table(route_source)
     query = f"""
     SELECT DISTINCT cluster_id, truck_type 
-    FROM {config.ROUTES_TABLE} 
+    FROM {routes_table} 
     ORDER BY cluster_id
     """
     
@@ -256,10 +311,11 @@ def update_route_dropdown_callback(dropdown_id):
      Output('packages-dropdown', 'options'),
      Output('packages-section', 'style')],
     [Input('route-dropdown', 'value'),
+     Input('route-source-toggle', 'value'),
      Input('reorder-state', 'data')],
     prevent_initial_call=True
 )
-def load_route_data_callback(selected_route, reorder_state):
+def load_route_data_callback(selected_route, route_source, reorder_state):
     """Load route data when route selection changes or after confirming reorder"""
     ctx = dash.callback_context
     
@@ -272,7 +328,8 @@ def load_route_data_callback(selected_route, reorder_state):
         if not reorder_state.get('reload_data'):
             # Return current state without reloading - preserve the reorder state
             return dash.no_update, dash.no_update, reorder_state, dash.no_update, dash.no_update
-    
+
+    routes_table = get_routes_table(route_source)
     query = f"""
     SELECT 
         cluster_id,
@@ -281,7 +338,7 @@ def load_route_data_callback(selected_route, reorder_state):
         package_id,
         latitude,
         longitude
-    FROM {config.ROUTES_TABLE} 
+    FROM {routes_table} 
     WHERE cluster_id = '{selected_route}'
     ORDER BY route_index
     """
@@ -320,10 +377,11 @@ def load_route_data_callback(selected_route, reorder_state):
     [Input('current-route-data', 'data'),
      Input('reorder-state', 'data'),
      Input('route-map', 'clickData')],
-    [State('route-dropdown', 'value')],
+    [State('route-dropdown', 'value'),
+     State('route-source-toggle', 'value')],
     prevent_initial_call=True
 )
-def update_route_map_callback(route_data, reorder_state, click_data, selected_route):
+def update_route_map_callback(route_data, reorder_state, click_data, selected_route, route_source):
     """Update the map and handle click interactions"""
     if not route_data:
         return {}, "", "", "", reorder_state, {'marginRight': '10px', 'marginBottom': '10px', 'display': 'none'}
@@ -351,6 +409,7 @@ def update_route_map_callback(route_data, reorder_state, click_data, selected_ro
     # Create stats
     truck_type = df['truck_type'].iloc[0] if not df.empty else 'Unknown'
     stats = html.Div([
+        html.P(f"View: {get_route_source_label(route_source)}"),
         html.P(f"Route: {selected_route}"),
         html.P(f"Truck Type: {truck_type}"),
         html.P(f"Total Stops: {len(df)}")
@@ -408,11 +467,12 @@ def update_route_map_callback(route_data, reorder_state, click_data, selected_ro
     [State('reorder-state', 'data'),
      State('current-route-data', 'data'),
      State('original-route-data', 'data'),
-     State('route-dropdown', 'value')],
+     State('route-dropdown', 'value'),
+     State('route-source-toggle', 'value')],
     prevent_initial_call=True
 )
 def handle_reorder_buttons_callback(start_clicks, confirm_clicks, reoptimize_clicks, cancel_clicks, 
-                                  reorder_state, current_route_data, original_route_data, selected_route):
+                                  reorder_state, current_route_data, original_route_data, selected_route, route_source):
     """Handle reordering button clicks"""
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -493,7 +553,7 @@ def handle_reorder_buttons_callback(start_clicks, confirm_clicks, reoptimize_cli
                 full_sequence = new_sequence + unclicked_packages
                 
                 # Update database with new order
-                update_route_order_in_db(selected_route, full_sequence)
+                update_route_order_in_db(selected_route, full_sequence, route_source)
         
         # Return to normal mode
         new_state = {'mode': 'normal', 'reload_data': True}
@@ -514,9 +574,10 @@ def handle_reorder_buttons_callback(start_clicks, confirm_clicks, reoptimize_cli
     
     return reorder_state, {'marginRight': '10px', 'marginBottom': '10px'}, {'marginRight': '10px', 'marginBottom': '10px', 'display': 'none'}, {'marginRight': '10px', 'marginBottom': '10px', 'display': 'none'}, {'marginBottom': '10px', 'display': 'none'}
 
-def update_route_order_in_db(cluster_id, new_sequence):
+def update_route_order_in_db(cluster_id, new_sequence, route_source):
     """Update route order in database"""
     try:
+        routes_table = get_routes_table(route_source)
         # Create update statements for each package
         case_statements = []
         for new_index, package_id in enumerate(new_sequence, 1):
@@ -525,7 +586,7 @@ def update_route_order_in_db(cluster_id, new_sequence):
         case_clause = " ".join(case_statements)
         
         update_query = f"""
-        UPDATE {config.ROUTES_TABLE} 
+        UPDATE {routes_table} 
         SET route_index = CASE package_id
             {case_clause}
         END
@@ -539,4 +600,7 @@ def update_route_order_in_db(cluster_id, new_sequence):
         print(f"❌ Error updating route order: {e}")
 
 if __name__ == '__main__':
-    app.run_server(debug=True, host='0.0.0.0', port=8050) 
+    app_port = int(os.getenv("PORT") or os.getenv("DATABRICKS_APP_PORT") or "8050")
+    # Databricks Apps should run a single stable web process rather than the Dash
+    # development reloader, which can cause proxy-side 502s during page reloads.
+    app.run_server(host='0.0.0.0', port=app_port, debug=False, use_reloader=False)

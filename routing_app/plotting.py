@@ -113,7 +113,7 @@ def plot_route_plotly(route_pdf, reorder_state=None):
     fig.add_trace(go.Scattermapbox(
         lat=df['latitude'],
         lon=df['longitude'],
-        mode='markers+text',
+        mode='markers',
         marker=dict(
             size=marker_size,
             color=df['color'],
@@ -122,12 +122,9 @@ def plot_route_plotly(route_pdf, reorder_state=None):
             showscale=True,
             colorbar=dict(title="Stop Order")
         ),
-        text=df['display_order'].astype(str),
-        textposition="middle center",
-        textfont=dict(size=10, color='white'),
         customdata=df[['package_id', 'route_index', 'display_order']].values,
         hovertemplate='<b>Package %{customdata[0]}</b><br>' +
-                      'Current Order: %{customdata[2]}<br>' +
+                      'Displayed Order: %{customdata[2]}<br>' +
                       'Original Order: %{customdata[1]}<br>' +
                       'Lat: %{lat}<br>' +
                       'Lon: %{lon}<extra></extra>',
@@ -137,7 +134,10 @@ def plot_route_plotly(route_pdf, reorder_state=None):
     # Configure the map layout
     fig.update_layout(
         mapbox=dict(
-            style="open-street-map",
+            # Raster tile styles work without a Mapbox token in Databricks Apps, but
+            # Plotly's marker text layer does not. Keep the basemap and rely on hover
+            # text for stop order details instead of in-marker labels.
+            style="carto-positron",
             center=dict(lat=df['latitude'].mean(), lon=df['longitude'].mean()),
             zoom=11
         ),
