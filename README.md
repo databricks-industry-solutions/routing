@@ -17,9 +17,9 @@ index and the Indiana OSRM graph assets.
 ## Tested targets
 
 - AWS `dev` target via the `DEFAULT` Databricks CLI profile.
-- Azure `azure` target via `adb-984752964297111`
-  (`https://adb-984752964297111.11.azuredatabricks.net`).
-- Azure classic-cluster defaults validated in this repo:
+- Azure `azure` target via a caller-supplied Databricks CLI profile, for example:
+  `databricks bundle deploy -t azure --profile <your-azure-profile>`.
+- Azure classic-cluster defaults validated in an internal Azure test workspace:
   - asset prep / CPU OSRM / CPU optimize: `Standard_D16ds_v5`
   - geocode + service validation: `Standard_D32ds_v5`
 - GPU optimization now runs on serverless GPU with `GPU_1xA10` in the bundle.
@@ -48,7 +48,7 @@ index and the Indiana OSRM graph assets.
 - `routing_app/`
   Dash app for browsing the final route table.
 - `databricks.yml`
-  Easy-button Asset Bundle with both the default AWS target and the Azure-validated
+  Easy-button Asset Bundle with both the default AWS target and an Azure-oriented
   `azure` target.
 
 ## Easy button
@@ -69,16 +69,13 @@ databricks bundle run routing_intro
 databricks bundle run routing_end_to_end
 ```
 
-Deploy and run the Azure-validated target:
+Deploy and run the Azure-oriented target with your own Databricks CLI profile:
 
 ```bash
-databricks bundle deploy -t azure
-databricks bundle run routing_intro -t azure
-databricks bundle run routing_end_to_end -t azure
+databricks bundle deploy -t azure --profile <your-azure-profile>
+databricks bundle run routing_intro -t azure --profile <your-azure-profile>
+databricks bundle run routing_end_to_end -t azure --profile <your-azure-profile>
 ```
-
-The `azure` target already pins `targets.azure.workspace.profile`, so do not override it
-with `--profile DEFAULT`.
 
 The recommended workflow order is:
 
@@ -148,6 +145,21 @@ the intended pairings for manual runs.
   and `2b-gpu-route-optimization/02_resolve_sparse_osrm.py` on
   `gpu_distance_cluster`
 
+If you want named interactive clusters for manual notebook runs, the repo includes a
+Databricks Python SDK helper that creates or updates those classic clusters for you.
+
+```bash
+python3 -m pip install databricks-sdk
+python3 setup_classic_clusters.py --profile <your-profile> --asset-prep-only --start
+```
+
+Run `1-preprocessing-geocoding/01_prepare_assets.py` on `asset_prep_cluster`, then create
+the rest of the classic notebook clusters:
+
+```bash
+python3 setup_classic_clusters.py --profile <your-profile> --start
+```
+
 If the configured catalog does not exist, `1-preprocessing-geocoding/01_prepare_assets.py`
 fails immediately with:
 
@@ -172,7 +184,7 @@ databricks bundle run routing_end_to_end
 
 ## Observed runtimes
 
-Successful Azure validation on `adb-984752964297111` produced these approximate
+Successful Azure validation in an internal test workspace produced these approximate
 stage-level timings on the classic-first version of the workflow:
 
 - asset prep cold path: ~49 min
@@ -291,3 +303,26 @@ See `data/README.md` for:
 
 Start with `AGENTS.md`. It explains the stage contracts, the safest change order, and the
 small set of files that control data source, geography, and deployment defaults.
+
+## Licenses
+
+© 2026 Databricks, Inc. All rights reserved. The source in this accelerator is provided
+subject to the Databricks License. All included or referenced third party libraries are
+subject to the licenses set forth below.
+
+| library | description | license | source |
+| --- | --- | --- | --- |
+| OSRM Backend Server | High performance routing engine written in C++ designed to run on OpenStreetMap data | BSD 2-Clause "Simplified" License | https://github.com/Project-OSRM/osrm-backend |
+| Photon | Open-source geocoder for OpenStreetMap data used by the address-to-coordinate stage | Apache License 2.0 | https://github.com/komoot/photon |
+| ortools | Operations research tools developed at Google for combinatorial optimization | Apache License 2.0 | https://github.com/google/or-tools |
+| folium | Visualize data in Python on interactive Leaflet.js maps | MIT License | https://github.com/python-visualization/folium |
+| dash | Python framework for building analytical web applications and dashboards | MIT License | https://github.com/plotly/dash |
+| branca | Library for generating complex HTML and JavaScript pages in Python; provides shared helpers for folium | MIT License | https://github.com/python-visualization/branca |
+| plotly | Open-source Python library for interactive charts and graphs | MIT License | https://github.com/plotly/plotly.py |
+| ray | Flexible distributed execution framework for scaling Python workflows | Apache License 2.0 | https://github.com/ray-project/ray |
+| Databricks SDK for Python | Python SDK for Databricks workspace APIs used by the dashboard and setup helper | Apache License 2.0 | https://github.com/databricks/databricks-sdk-py |
+| DuckDB | In-process analytical database used to refresh the vendored Overture sample | MIT License | https://github.com/duckdb/duckdb |
+| cuOpt | GPU-accelerated combinatorial optimization solver from NVIDIA | Apache License 2.0 | https://docs.nvidia.com/cuopt/user-guide/latest/license.html |
+
+The vendored address sample derives from Overture open address data. See `data/README.md`
+for source release details and attribution notes.

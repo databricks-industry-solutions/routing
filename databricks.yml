@@ -123,8 +123,6 @@ targets:
                   spark.task.resource.gpu.amount: "0"
   azure:
     mode: development
-    workspace:
-      profile: adb-984752964297111
     variables:
       cpu_node_type_id: Standard_D16ds_v5
       geocode_node_type_id: Standard_D32ds_v5

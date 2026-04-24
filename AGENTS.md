@@ -40,6 +40,8 @@ Do not silently change these contracts. If you must change them, update:
   `0-introduction/`
 - Deployment defaults:
   `databricks.yml`
+- Manual classic cluster helper:
+  `setup_classic_clusters.py`
 - Vendored sample refresh:
   `data/refresh_overture_indiana_addresses.py`
 - Data provenance:
@@ -58,7 +60,7 @@ Do not silently change these contracts. If you must change them, update:
 - Databricks CLI profile:
   `DEFAULT`
 - Azure target profile:
-  `adb-984752964297111`
+  caller-supplied at runtime, for example `--profile <your-azure-profile>`
 - Catalog / schema:
   `demos.routing`
 - Shared managed volume:
